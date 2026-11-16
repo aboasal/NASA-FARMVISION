@@ -1,0 +1,211 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b1914;
+  --foreground: #f7faf6;
+  --nova-surface: #10241c;
+  --nova-card: #163026;
+  --nova-border: rgba(110, 231, 183, 0.24);
+  --nova-sage: #6ee7b7;
+  --nova-emerald: #34d399;
+  --nova-gold: #fbbf24;
+  --nova-muted: #c2d9cd;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Leaflet polish in Warm Canopy Green & Harvest Gold style */
+.leaflet-container {
+  font-family: inherit;
+  background: #0b1914;
+}
+.leaflet-bar {
+  border: 1px solid rgba(110, 231, 183, 0.32) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+}
+.leaflet-bar a {
+  background-color: rgba(16, 36, 28, 0.92) !important;
+  color: #f7faf6 !important;
+  border-bottom: 1px solid rgba(110, 231, 183, 0.2) !important;
+  backdrop-filter: blur(12px);
+}
+.leaflet-bar a:hover {
+  background-color: rgba(22, 48, 38, 0.96) !important;
+  color: #fbbf24 !important;
+}
+.leaflet-tooltip {
+  background: rgba(16, 36, 28, 0.94) !important;
+  color: #f7faf6 !important;
+  border: 1px solid rgba(110, 231, 183, 0.32) !important;
+  border-radius: 10px !important;
+  padding: 6px 10px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+.leaflet-control-attribution {
+  background: rgba(11, 25, 20, 0.8) !important;
+  color: #c2d9cd !important;
+  backdrop-filter: blur(8px);
+}
+.leaflet-control-attribution a {
+  color: #6ee7b7 !important;
+}
+
+/* Global readability scaling (A / A+ / A++) */
+html[data-font-scale="normal"] {
+  font-size: 16px;
+}
+html[data-font-scale="large"] {
+  font-size: 18.5px;
+}
+html[data-font-scale="xlarge"] {
+  font-size: 21px;
+}
+
+/* High-contrast sunlight / low-vision boost */
+html[data-high-contrast="true"] {
+  --background: #020405;
+  --foreground: #ffffff;
+  --nova-surface: #070b0d;
+  --nova-card: #0c1216;
+  --nova-border: rgba(255, 255, 255, 0.32);
+  --nova-muted: #d9ebe2;
+}
+
+html[data-high-contrast="true"] body {
+  background: #020405;
+  color: #ffffff;
+}
+
+html[data-high-contrast="true"] [class*="border-white/"] {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* Clean print sheet for farmers taking plans to the field or seed shop */
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-card {
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: 1.5px solid #1f2937 !important;
+    box-shadow: none !important;
+  }
+  .print-card * {
+    color: #111827 !important;
+  }
+}
+
+/* Slim dark scrollbars for the sidebar */
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: #0a0f13;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: #23303a;
+  border-radius: 9999px;
+}
+
+/* NASA × FARMVISION cosmic background animations */
+@keyframes nasaNebulaDrift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.72;
+  }
+  50% {
+    transform: translate3d(26px, -18px, 0) scale(1.09);
+    opacity: 0.96;
+  }
+}
+
+@keyframes nasaSatelliteFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-16px, 11px, 0);
+  }
+}
+
+@keyframes nasaMeteorStreak {
+  0% {
+    transform: translate3d(-160px, -70px, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.95;
+  }
+  32% {
+    transform: translate3d(320px, 140px, 0);
+    opacity: 0;
+  }
+  100% {
+    transform: translate3d(320px, 140px, 0);
+    opacity: 0;
+  }
+}
+
+@keyframes nasaRadarDash {
+  to {
+    stroke-dashoffset: -56;
+  }
+}
+
+.animate-nebula-drift {
+  animation: nasaNebulaDrift 14s ease-in-out infinite;
+}
+
+.animate-satellite-orbit {
+  animation: nasaSatelliteFloat 7.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-meteor-1 {
+  animation: nasaMeteorStreak 7.5s ease-in infinite;
+}
+
+.animate-meteor-2 {
+  animation: nasaMeteorStreak 10.5s ease-in 3.4s infinite;
+}
+
+.animate-radar-dash {
+  animation: nasaRadarDash 4.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-nebula-drift,
+  .animate-satellite-orbit,
+  .animate-meteor-1,
+  .animate-meteor-2,
+  .animate-radar-dash {
+    animation: none !important;
+  }
+}
