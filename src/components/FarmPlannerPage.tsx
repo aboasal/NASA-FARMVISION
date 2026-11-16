@@ -281,7 +281,8 @@ export default function FarmPlannerPage({
   const [backendPlans, setBackendPlans] = useState<CropCyclePlan[] | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [scenario, setScenario] = useState<WeatherScenario>("normal");
-  const [showAllPlans, setShowAllPlans] = useState(false);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [showAllPlans, setShowAllPlans] = useState(true);
 
   // Voice synthesis & recognition states (mounted check prevents SSR hydration mismatch)
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -345,10 +346,48 @@ export default function FarmPlannerPage({
     [field, inputs, nasaData]
   );
 
-  const activePlans =
-    backendPlans && backendPlans.length > 0 ? backendPlans : localPlans;
-  const topPlan = activePlans[0];
-  const otherPlans = activePlans.slice(1);
+  const rawPlans = useMemo(
+    () => (backendPlans && backendPlans.length > 0 ? backendPlans : localPlans),
+    [backendPlans, localPlans]
+  );
+
+  // Dynamically re-score & re-rank all 4 plans under Normal / Dry / Wet scenarios
+  const activePlans = useMemo(() => {
+    const adjusted = rawPlans.map((plan) => {
+      const scenarioNeed =
+        scenario === "dry"
+          ? plan.dryYearWaterNeedM3PerHa ?? Math.round(plan.waterNeededM3PerHa * 1.18)
+          : scenario === "wet"
+            ? Math.round(plan.waterNeededM3PerHa * 0.78)
+            : plan.waterNeededM3PerHa;
+      const ratio = scenarioNeed > 0 ? inputs.waterM3PerHa / scenarioNeed : 2;
+      const waterStatus: CropCyclePlan["waterStatus"] =
+        ratio >= 1 ? "optimal" : ratio >= 0.72 ? "tight" : "deficit";
+
+      let liveScore = plan.matchScore;
+      const res = plan.resilienceScore ?? plan.waterEfficiencyScore;
+      if (scenario === "dry") {
+        liveScore += (res - 70) * 0.25;
+        if (waterStatus === "deficit" && plan.waterStatus !== "deficit") liveScore -= 12;
+        else if (waterStatus === "tight" && plan.waterStatus === "optimal") liveScore -= 4;
+      } else if (scenario === "wet") {
+        liveScore += waterStatus === "optimal" && plan.waterStatus !== "optimal" ? 8 : 2;
+      }
+
+      return {
+        ...plan,
+        waterStatus,
+        matchScore: Math.round(clamp(liveScore, 35, 99)),
+      };
+    });
+
+    adjusted.sort((a, b) => b.matchScore - a.matchScore);
+    return adjusted;
+  }, [inputs.waterM3PerHa, rawPlans, scenario]);
+
+  const topPlan =
+    activePlans.find((p) => p.id === selectedPlanId) ?? activePlans[0];
+  const otherPlans = activePlans.filter((p) => p.id !== topPlan?.id);
   const areaDisplay = formatArea(field.areaHectares, areaUnit);
   const totalWaterM3 = Math.round(field.areaHectares * inputs.waterM3PerHa);
   const prevCropMeta = PREVIOUS_CROP_INFO[inputs.lastCrop];
@@ -1204,6 +1243,62 @@ export default function FarmPlannerPage({
               })}
             </div>
 
+            {/* Interactive 4-Plan Switcher Bar — click any plan to test in the predictor */}
+            {activePlans.length > 0 && (
+              <section
+                data-testid="plan-switcher-bar"
+                aria-label="Choose a rotation plan to inspect"
+                className="no-print space-y-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-extrabold uppercase tracking-wider text-[#6EE7B7]">
+                    Choose Any of Your {activePlans.length} Tailored Crop Plans to Predict
+                  </div>
+                  <span className="text-xs font-semibold text-[#C2D9CD]">
+                    Auto-ranked for{" "}
+                    <strong className="text-[#F7FAF6]">
+                      {PRIORITY_OPTIONS.find((p) => p.id === inputs.priority)?.shortTitle}
+                    </strong>{" "}
+                    &bull; {inputs.lastCrop} before &bull;{" "}
+                    {inputs.waterM3PerHa.toLocaleString()} m&sup3;/ha
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                  {activePlans.map((plan, idx) => {
+                    const isSelected = topPlan?.id === plan.id;
+                    return (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        data-testid={`plan-switch-${plan.id}`}
+                        onClick={() => setSelectedPlanId(plan.id)}
+                        className={`text-left rounded-2xl border-2 p-3.5 transition space-y-1.5 ${
+                          isSelected
+                            ? "bg-[#6EE7B7]/16 border-[#6EE7B7] shadow-lg"
+                            : "bg-[#10241C] border-[#6EE7B7]/25 hover:border-[#6EE7B7]/60"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-extrabold uppercase tracking-wider text-[#6EE7B7]">
+                            #{idx + 1} &bull; {plan.matchScore}% Match
+                          </span>
+                          {isSelected && (
+                            <CheckCircle2 className="w-4 h-4 text-[#6EE7B7] shrink-0" />
+                          )}
+                        </div>
+                        <div className="text-base font-extrabold text-[#F7FAF6] leading-snug">
+                          {plan.name}
+                        </div>
+                        <div className="text-xs font-semibold text-[#D4E6DC] truncate">
+                          {plan.stages.map((s) => s.crop).join(" → ")}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             {/* Interactive PREDICT MECHANIC: What-If Weather & 3-Year Simulator */}
             {topPlan && prediction && (
               <section
@@ -1438,6 +1533,14 @@ export default function FarmPlannerPage({
                     <div className="text-sm text-[#D4E6DC] mt-0.5">
                       {backendClimate.dryMonths.length} dry month
                       {backendClimate.dryMonths.length === 1 ? "" : "s"} a year
+                      {backendClimate.annualEt0Mm ? (
+                        <>
+                          {" "}&bull; ET<sub>0</sub>:{" "}
+                          <strong className="text-[#6EE7B7]">
+                            {backendClimate.annualEt0Mm.toLocaleString()} mm/yr
+                          </strong>
+                        </>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1560,6 +1663,7 @@ export default function FarmPlannerPage({
                       isPrimary={false}
                       ttsSupported={ttsSupported}
                       onSpeak={speakHelper}
+                      onSelect={() => setSelectedPlanId(plan.id)}
                     />
                   ))}
               </div>
@@ -1624,12 +1728,14 @@ function LargePlanCard({
   isPrimary,
   ttsSupported,
   onSpeak,
+  onSelect,
 }: {
   plan: CropCyclePlan;
   inputs: FarmerGroundInputs;
   isPrimary: boolean;
   ttsSupported: boolean;
   onSpeak: (text: string) => void;
+  onSelect?: () => void;
 }) {
   const waterPill = getWaterPill(plan.waterStatus);
 
@@ -1658,7 +1764,7 @@ function LargePlanCard({
                   : "bg-[#1A382C] text-[#E6F1EC]"
               }`}
             >
-              {isPrimary ? "Best Match for Your Land" : plan.badge}
+              {isPrimary ? `Selected • ${plan.matchScore}% Match` : `${plan.badge} • ${plan.matchScore}%`}
             </span>
             <span
               className={`px-3.5 py-1 rounded-full text-sm font-bold border ${waterPill.classes}`}
@@ -1672,16 +1778,28 @@ function LargePlanCard({
           <p className="text-base sm:text-lg text-[#D4E6DC]">{plan.tagline}</p>
         </div>
 
-        {ttsSupported && (
-          <button
-            type="button"
-            onClick={() => onSpeak(buildPlanSpeech())}
-            className="no-print inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-base font-bold text-[#08150F]"
-          >
-            <Volume2 className="w-5 h-5" />
-            Listen to Plan
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {!isPrimary && onSelect && (
+            <button
+              type="button"
+              onClick={onSelect}
+              className="no-print inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#6EE7B7] hover:bg-[#4ADE80] text-sm font-extrabold text-[#08150F] transition"
+            >
+              <Sparkles className="w-4 h-4" />
+              Test in 3-Year Predictor
+            </button>
+          )}
+          {ttsSupported && (
+            <button
+              type="button"
+              onClick={() => onSpeak(buildPlanSpeech())}
+              className="no-print inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-base font-bold text-[#08150F]"
+            >
+              <Volume2 className="w-5 h-5" />
+              Listen to Plan
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 3 Big Readable Summary Metrics */}
@@ -1796,6 +1914,41 @@ function LargePlanCard({
           ))}
         </div>
       </div>
+
+      {/* 3-Year Multi-Year Crop Rotation Roadmap */}
+      {plan.threeYearCycle && plan.threeYearCycle.length === 3 && (
+        <div data-testid="three-year-roadmap" className="space-y-3">
+          <div className="text-base font-extrabold uppercase tracking-wider text-amber-300">
+            3-Year Crop Rotation Roadmap (Year 1 &rarr; Year 2 &rarr; Year 3)
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {plan.threeYearCycle.map((yr) => (
+              <div
+                key={yr.year}
+                className="rounded-2xl bg-[#0C1B15] border border-amber-300/25 p-4 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-extrabold text-amber-300">
+                    {yr.title}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#152E24] border border-[#6EE7B7]/30 text-xs font-extrabold text-[#6EE7B7]">
+                    Soil {yr.soilHealthScore}%
+                  </span>
+                </div>
+                <div className="text-base font-extrabold text-[#F7FAF6]">
+                  {yr.crops.join(" → ")}
+                </div>
+                <div className="text-xs font-bold text-sky-300">
+                  ~${yr.estimatedRevenuePerHaUsd.toLocaleString()} / ha est.
+                </div>
+                <p className="text-sm text-[#D4E6DC] leading-relaxed">
+                  {yr.summary}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Why It Fits & Action Steps */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

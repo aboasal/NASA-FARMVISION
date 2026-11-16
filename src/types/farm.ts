@@ -85,6 +85,15 @@ export interface CropCycleStage {
   role: string;
 }
 
+export interface YearRotationPlan {
+  year: 1 | 2 | 3;
+  title: string;
+  crops: [string, string, string];
+  soilHealthScore: number;
+  estimatedRevenuePerHaUsd: number;
+  summary: string;
+}
+
 export interface CropCyclePlan {
   id: string;
   name: string;
@@ -108,6 +117,8 @@ export interface CropCyclePlan {
   dryYearWaterNeedM3PerHa?: number;
   /** Plain-language warnings (heat months, frost, water shortfall) */
   cautions?: string[];
+  /** Dedicated 3-year multi-year crop rotation progression */
+  threeYearCycle?: [YearRotationPlan, YearRotationPlan, YearRotationPlan];
 }
 
 /* ------------------------------------------------------------------ */
@@ -132,6 +143,8 @@ export interface ClimateProfile {
   location: { lat: number; lng: number };
   zoneLabel: string;
   annualRainMm: number;
+  /** Annual FAO-style reference evapotranspiration estimated from NASA temperature & solar */
+  annualEt0Mm?: number;
   meanTempC: number;
   monthly: MonthlyClimate[];
   dryMonths: string[];

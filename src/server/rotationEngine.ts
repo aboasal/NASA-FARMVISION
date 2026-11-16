@@ -6,20 +6,17 @@ import type {
   PlanPriority,
   PreviousCropType,
   RiskLevel,
+  YearRotationPlan,
 } from "@/types/farm";
 import { MONTH_LABELS } from "./climateProfile";
 
 /**
- * Crop-rotation engine.
+ * Dynamic crop-rotation & multi-year planning engine.
  *
- * Builds 3-season (12-month) rotation options for a field from:
- *  - NASA POWER long-term climate (monthly temperature & rainfall),
+ * Builds 4 distinct multi-season & 3-year rotation options from:
+ *  - NASA POWER long-term climate & FAO-style ET0 water demand,
  *  - NASA 10-year variability (driest year, rain swings, warming),
- *  - the farmer's ground truth (water supply, last crop, goal).
- *
- * Each option is scored for Soil Health, Weather & Water Resilience and
- * Income, then ranked by the farmer's goal. Values are indicative and meant
- * to help farmers *explore* options — not to replace local agronomy advice.
+ *  - Farmer inputs (water quota/tier, previous crop, and strategic priority).
  */
 
 type Family =
@@ -39,7 +36,7 @@ interface CropSpec {
   family: Family;
   legume: boolean;
   cover: boolean;
-  waterMm: number; // seasonal crop water use
+  waterMm: number; // seasonal reference crop water use
   tMin: number; // suitable monthly mean temperature range (°C)
   tMax: number;
   heatTol: number; // 0..1
@@ -53,28 +50,28 @@ interface CropSpec {
 }
 
 const CROPS: Record<string, CropSpec> = {
-  wheat: { key: "wheat", name: "Wheat", family: "cereal", legume: false, cover: false, waterMm: 450, tMin: 6, tMax: 22, heatTol: 0.3, droughtTol: 0.55, frostTol: 0.9, nFix: 0, nUse: 120, residue: 0.8, revenue: 1300, role: "Reliable grain that uses the nitrogen left by beans." },
-  barley: { key: "barley", name: "Barley", family: "cereal", legume: false, cover: false, waterMm: 380, tMin: 5, tMax: 22, heatTol: 0.4, droughtTol: 0.7, frostTol: 0.9, nFix: 0, nUse: 90, residue: 0.7, revenue: 1100, role: "Hardy grain that needs less water than wheat." },
-  corn: { key: "corn", name: "Corn (Maize)", family: "cereal", legume: false, cover: false, waterMm: 600, tMin: 18, tMax: 32, heatTol: 0.6, droughtTol: 0.35, frostTol: 0, nFix: 0, nUse: 180, residue: 0.9, revenue: 1900, role: "High-yield grain and fodder for the warm season." },
-  sorghum: { key: "sorghum", name: "Grain Sorghum", family: "cereal", legume: false, cover: false, waterMm: 450, tMin: 20, tMax: 36, heatTol: 0.9, droughtTol: 0.85, frostTol: 0, nFix: 0, nUse: 100, residue: 0.8, revenue: 1200, role: "Tough grain that keeps growing through heat and dry spells." },
-  millet: { key: "millet", name: "Pearl Millet", family: "cereal", legume: false, cover: false, waterMm: 330, tMin: 22, tMax: 38, heatTol: 0.95, droughtTol: 0.9, frostTol: 0, nFix: 0, nUse: 70, residue: 0.6, revenue: 900, role: "One of the most drought-proof grains — safe in hot, dry years." },
-  rye: { key: "rye", name: "Winter Rye Cover", family: "cover-grass", legume: false, cover: true, waterMm: 200, tMin: -2, tMax: 18, heatTol: 0.1, droughtTol: 0.6, frostTol: 1, nFix: 0, nUse: 20, residue: 1, revenue: 150, role: "Covers bare winter soil, holds it against wind & rain, adds organic matter." },
-  faba: { key: "faba", name: "Faba Beans", family: "legume", legume: true, cover: false, waterMm: 400, tMin: 6, tMax: 22, heatTol: 0.3, droughtTol: 0.5, frostTol: 0.7, nFix: 110, nUse: 0, residue: 0.5, revenue: 1500, role: "Cool-season beans that put natural nitrogen back in the soil." },
-  chickpea: { key: "chickpea", name: "Chickpeas", family: "legume", legume: true, cover: false, waterMm: 330, tMin: 12, tMax: 28, heatTol: 0.6, droughtTol: 0.85, frostTol: 0.4, nFix: 60, nUse: 0, residue: 0.4, revenue: 1600, role: "Drought-hardy pulse that feeds the soil and sells well." },
-  lentil: { key: "lentil", name: "Lentils", family: "legume", legume: true, cover: false, waterMm: 300, tMin: 6, tMax: 22, heatTol: 0.4, droughtTol: 0.75, frostTol: 0.6, nFix: 70, nUse: 0, residue: 0.4, revenue: 1500, role: "Low-water pulse that adds nitrogen for the next crop." },
-  soybean: { key: "soybean", name: "Soybeans", family: "legume", legume: true, cover: false, waterMm: 500, tMin: 18, tMax: 32, heatTol: 0.6, droughtTol: 0.45, frostTol: 0, nFix: 130, nUse: 0, residue: 0.5, revenue: 1400, role: "Warm-season beans that fix a lot of nitrogen." },
-  cowpea: { key: "cowpea", name: "Cowpeas", family: "legume", legume: true, cover: false, waterMm: 350, tMin: 20, tMax: 36, heatTol: 0.9, droughtTol: 0.85, frostTol: 0, nFix: 80, nUse: 0, residue: 0.6, revenue: 1000, role: "Heat-loving beans that shade the soil and add nitrogen." },
-  mung: { key: "mung", name: "Mung Beans", family: "legume", legume: true, cover: false, waterMm: 320, tMin: 22, tMax: 36, heatTol: 0.85, droughtTol: 0.75, frostTol: 0, nFix: 60, nUse: 0, residue: 0.4, revenue: 1100, role: "Short, quick bean crop that fits between main seasons." },
-  sunflower: { key: "sunflower", name: "Sunflower", family: "oilseed", legume: false, cover: false, waterMm: 480, tMin: 16, tMax: 30, heatTol: 0.7, droughtTol: 0.7, frostTol: 0.1, nFix: 0, nUse: 80, residue: 0.6, revenue: 1300, role: "Deep roots break hard soil layers and reach deep moisture." },
-  sesame: { key: "sesame", name: "Sesame", family: "oilseed", legume: false, cover: false, waterMm: 380, tMin: 22, tMax: 36, heatTol: 0.9, droughtTol: 0.85, frostTol: 0, nFix: 0, nUse: 50, residue: 0.4, revenue: 1500, role: "High-value oilseed that copes with heat and little water." },
-  canola: { key: "canola", name: "Canola (Rapeseed)", family: "brassica", legume: false, cover: false, waterMm: 420, tMin: 6, tMax: 20, heatTol: 0.2, droughtTol: 0.5, frostTol: 0.8, nFix: 0, nUse: 130, residue: 0.6, revenue: 1300, role: "Cool-season oilseed that breaks cereal disease cycles." },
-  tomato: { key: "tomato", name: "Tomatoes", family: "solanaceae", legume: false, cover: false, waterMm: 600, tMin: 16, tMax: 28, heatTol: 0.4, droughtTol: 0.2, frostTol: 0, nFix: 0, nUse: 160, residue: 0.2, revenue: 6000, role: "High-value market crop for quick cash." },
-  potato: { key: "potato", name: "Potatoes", family: "solanaceae", legume: false, cover: false, waterMm: 500, tMin: 10, tMax: 24, heatTol: 0.2, droughtTol: 0.3, frostTol: 0.2, nFix: 0, nUse: 150, residue: 0.2, revenue: 4500, role: "High-earning tuber crop for local markets." },
-  cotton: { key: "cotton", name: "Cotton", family: "malvaceae", legume: false, cover: false, waterMm: 700, tMin: 20, tMax: 34, heatTol: 0.8, droughtTol: 0.6, frostTol: 0, nFix: 0, nUse: 130, residue: 0.5, revenue: 2200, role: "Cash fibre crop for hot summers." },
-  berseem: { key: "berseem", name: "Berseem Clover", family: "legume", legume: true, cover: true, waterMm: 450, tMin: 8, tMax: 24, heatTol: 0.3, droughtTol: 0.4, frostTol: 0.6, nFix: 150, nUse: 0, residue: 0.9, revenue: 700, role: "Animal fodder that adds lots of nitrogen and organic matter." },
-  vetchOat: { key: "vetchOat", name: "Vetch & Oat Cover Mix", family: "cover-mix", legume: true, cover: true, waterMm: 250, tMin: 4, tMax: 22, heatTol: 0.3, droughtTol: 0.6, frostTol: 0.85, nFix: 70, nUse: 0, residue: 1, revenue: 250, role: "Living cover that protects soil and adds nitrogen + organic matter." },
-  sudangrass: { key: "sudangrass", name: "Sorghum-Sudangrass Cover", family: "cover-grass", legume: false, cover: true, waterMm: 350, tMin: 20, tMax: 38, heatTol: 0.95, droughtTol: 0.85, frostTol: 0, nFix: 0, nUse: 30, residue: 1, revenue: 350, role: "Fast summer cover with deep roots that builds soil structure." },
-  fallow: { key: "fallow", name: "Rest Period + Straw Mulch", family: "fallow", legume: false, cover: true, waterMm: 0, tMin: -40, tMax: 50, heatTol: 1, droughtTol: 1, frostTol: 1, nFix: 0, nUse: 0, residue: 0.5, revenue: 0, role: "Too cold/hot to grow — cover the soil with straw to protect it." },
+  wheat: { key: "wheat", name: "Wheat", family: "cereal", legume: false, cover: false, waterMm: 450, tMin: 6, tMax: 24, heatTol: 0.35, droughtTol: 0.55, frostTol: 0.9, nFix: 0, nUse: 120, residue: 0.8, revenue: 1350, role: "Reliable grain that uses the nitrogen left by beans." },
+  barley: { key: "barley", name: "Barley", family: "cereal", legume: false, cover: false, waterMm: 360, tMin: 5, tMax: 24, heatTol: 0.45, droughtTol: 0.72, frostTol: 0.9, nFix: 0, nUse: 90, residue: 0.7, revenue: 1150, role: "Hardy grain that needs less water than wheat." },
+  corn: { key: "corn", name: "Corn (Maize)", family: "cereal", legume: false, cover: false, waterMm: 620, tMin: 17, tMax: 33, heatTol: 0.58, droughtTol: 0.35, frostTol: 0, nFix: 0, nUse: 180, residue: 0.9, revenue: 2050, role: "High-yield grain and fodder when irrigation supply is steady." },
+  sorghum: { key: "sorghum", name: "Grain Sorghum", family: "cereal", legume: false, cover: false, waterMm: 410, tMin: 18, tMax: 37, heatTol: 0.9, droughtTol: 0.86, frostTol: 0, nFix: 0, nUse: 100, residue: 0.8, revenue: 1250, role: "Tough grain that keeps growing through heat and dry spells." },
+  millet: { key: "millet", name: "Pearl Millet", family: "cereal", legume: false, cover: false, waterMm: 310, tMin: 20, tMax: 39, heatTol: 0.95, droughtTol: 0.92, frostTol: 0, nFix: 0, nUse: 70, residue: 0.6, revenue: 950, role: "One of the most drought-proof grains — safe in hot, dry years." },
+  rye: { key: "rye", name: "Winter Rye Cover", family: "cover-grass", legume: false, cover: true, waterMm: 200, tMin: -2, tMax: 20, heatTol: 0.15, droughtTol: 0.65, frostTol: 1, nFix: 0, nUse: 20, residue: 1, revenue: 180, role: "Covers winter soil, stops wind/rain erosion, and adds organic matter." },
+  faba: { key: "faba", name: "Faba Beans", family: "legume", legume: true, cover: false, waterMm: 400, tMin: 6, tMax: 23, heatTol: 0.3, droughtTol: 0.5, frostTol: 0.72, nFix: 115, nUse: 0, residue: 0.55, revenue: 1580, role: "Cool-season beans that put natural nitrogen back in the soil." },
+  chickpea: { key: "chickpea", name: "Chickpeas", family: "legume", legume: true, cover: false, waterMm: 310, tMin: 11, tMax: 29, heatTol: 0.65, droughtTol: 0.86, frostTol: 0.4, nFix: 65, nUse: 0, residue: 0.45, revenue: 1680, role: "Drought-hardy pulse that feeds soil nitrogen and sells well." },
+  lentil: { key: "lentil", name: "Lentils", family: "legume", legume: true, cover: false, waterMm: 290, tMin: 6, tMax: 25, heatTol: 0.45, droughtTol: 0.78, frostTol: 0.6, nFix: 75, nUse: 0, residue: 0.45, revenue: 1540, role: "Low-water pulse that adds nitrogen for the next crop." },
+  soybean: { key: "soybean", name: "Soybeans", family: "legume", legume: true, cover: false, waterMm: 510, tMin: 17, tMax: 33, heatTol: 0.6, droughtTol: 0.45, frostTol: 0, nFix: 135, nUse: 0, residue: 0.55, revenue: 1520, role: "Warm-season beans that fix substantial free nitrogen." },
+  cowpea: { key: "cowpea", name: "Cowpeas", family: "legume", legume: true, cover: false, waterMm: 330, tMin: 19, tMax: 37, heatTol: 0.9, droughtTol: 0.86, frostTol: 0, nFix: 85, nUse: 0, residue: 0.6, revenue: 1080, role: "Heat-loving beans that shade the soil and add nitrogen." },
+  mung: { key: "mung", name: "Mung Beans", family: "legume", legume: true, cover: false, waterMm: 320, tMin: 20, tMax: 36, heatTol: 0.85, droughtTol: 0.76, frostTol: 0, nFix: 65, nUse: 0, residue: 0.45, revenue: 1180, role: "Quick warm-season pulse that fits neatly between main crops." },
+  sunflower: { key: "sunflower", name: "Sunflower", family: "oilseed", legume: false, cover: false, waterMm: 440, tMin: 15, tMax: 32, heatTol: 0.72, droughtTol: 0.72, frostTol: 0.1, nFix: 0, nUse: 80, residue: 0.6, revenue: 1450, role: "Deep taproots break hardpan soil layers and tap deep moisture." },
+  sesame: { key: "sesame", name: "Sesame", family: "oilseed", legume: false, cover: false, waterMm: 340, tMin: 20, tMax: 37, heatTol: 0.92, droughtTol: 0.88, frostTol: 0, nFix: 0, nUse: 50, residue: 0.4, revenue: 1720, role: "High-value cash oilseed built for hot, low-water regions." },
+  canola: { key: "canola", name: "Canola (Rapeseed)", family: "brassica", legume: false, cover: false, waterMm: 410, tMin: 6, tMax: 22, heatTol: 0.25, droughtTol: 0.52, frostTol: 0.8, nFix: 0, nUse: 125, residue: 0.6, revenue: 1380, role: "Cool-season broadleaf oilseed that breaks grain pest cycles." },
+  tomato: { key: "tomato", name: "Tomatoes", family: "solanaceae", legume: false, cover: false, waterMm: 620, tMin: 15, tMax: 29, heatTol: 0.42, droughtTol: 0.22, frostTol: 0, nFix: 0, nUse: 160, residue: 0.2, revenue: 5800, role: "High-value market crop for maximum income under full irrigation." },
+  potato: { key: "potato", name: "Potatoes", family: "solanaceae", legume: false, cover: false, waterMm: 490, tMin: 10, tMax: 25, heatTol: 0.25, droughtTol: 0.32, frostTol: 0.2, nFix: 0, nUse: 150, residue: 0.25, revenue: 4300, role: "Strong-earning tuber crop when medium-to-full water is available." },
+  cotton: { key: "cotton", name: "Cotton", family: "malvaceae", legume: false, cover: false, waterMm: 690, tMin: 19, tMax: 35, heatTol: 0.82, droughtTol: 0.6, frostTol: 0, nFix: 0, nUse: 130, residue: 0.5, revenue: 2300, role: "High-return warm-season fibre crop for irrigated plots." },
+  berseem: { key: "berseem", name: "Berseem Clover", family: "legume", legume: true, cover: true, waterMm: 450, tMin: 8, tMax: 25, heatTol: 0.35, droughtTol: 0.42, frostTol: 0.6, nFix: 155, nUse: 0, residue: 0.9, revenue: 780, role: "Fodder & green manure that floods the soil with natural nitrogen." },
+  vetchOat: { key: "vetchOat", name: "Vetch & Oat Cover Mix", family: "cover-mix", legume: true, cover: true, waterMm: 240, tMin: 4, tMax: 24, heatTol: 0.35, droughtTol: 0.65, frostTol: 0.85, nFix: 75, nUse: 0, residue: 1, revenue: 280, role: "Living cover mix that shields soil and restores organic structure." },
+  sudangrass: { key: "sudangrass", name: "Sorghum-Sudangrass Cover", family: "cover-grass", legume: false, cover: true, waterMm: 310, tMin: 19, tMax: 38, heatTol: 0.95, droughtTol: 0.87, frostTol: 0, nFix: 0, nUse: 30, residue: 1, revenue: 360, role: "Fast warm-season cover that smothers weeds and loosens subsoil." },
+  fallow: { key: "fallow", name: "Rest Period + Straw Mulch", family: "fallow", legume: false, cover: true, waterMm: 0, tMin: -40, tMax: 50, heatTol: 1, droughtTol: 1, frostTol: 1, nFix: 0, nUse: 0, residue: 0.5, revenue: 0, role: "Too extreme to sow — mulch bare dirt to save moisture until next window." },
 };
 
 const LAST_CROP_FAMILY: Record<PreviousCropType, Family | "perennial" | "none"> = {
@@ -86,6 +83,56 @@ const LAST_CROP_FAMILY: Record<PreviousCropType, Family | "perennial" | "none"> 
   Soybeans: "legume",
   Orchard: "perennial",
   Fallow: "none",
+};
+
+interface LastCropRule {
+  avoidKeys: string[];
+  boostKeys: string[];
+  secondBoostKeys: string[];
+}
+
+/** Crop-specific succession guidance so all 8 previous-crop choices shift crop sequences meaningfully */
+const LAST_CROP_RULES: Record<PreviousCropType, LastCropRule> = {
+  Wheat: {
+    avoidKeys: ["wheat", "barley", "rye"],
+    boostKeys: ["chickpea", "faba", "soybean", "sunflower", "tomato", "canola"],
+    secondBoostKeys: ["corn", "sorghum", "sesame", "cowpea"],
+  },
+  Corn: {
+    avoidKeys: ["corn", "sorghum", "millet"],
+    boostKeys: ["soybean", "faba", "lentil", "chickpea", "potato", "sunflower"],
+    secondBoostKeys: ["wheat", "barley", "canola", "berseem"],
+  },
+  Rice: {
+    avoidKeys: ["corn", "wheat", "sudangrass"],
+    boostKeys: ["berseem", "lentil", "chickpea", "canola", "potato", "faba"],
+    secondBoostKeys: ["mung", "sesame", "sunflower", "sorghum"],
+  },
+  Cotton: {
+    avoidKeys: ["cotton", "tomato", "sunflower"],
+    boostKeys: ["wheat", "faba", "barley", "chickpea", "berseem", "lentil"],
+    secondBoostKeys: ["soybean", "mung", "corn", "cowpea"],
+  },
+  Vegetables: {
+    avoidKeys: ["tomato", "potato", "cotton"],
+    boostKeys: ["faba", "soybean", "wheat", "corn", "sorghum", "sunflower"],
+    secondBoostKeys: ["chickpea", "berseem", "barley", "vetchOat"],
+  },
+  Soybeans: {
+    avoidKeys: ["soybean", "faba", "chickpea", "lentil", "cowpea", "mung"],
+    boostKeys: ["tomato", "corn", "wheat", "potato", "cotton", "canola"],
+    secondBoostKeys: ["sunflower", "sesame", "sorghum", "barley"],
+  },
+  Orchard: {
+    avoidKeys: ["cotton", "sunflower", "corn"],
+    boostKeys: ["berseem", "vetchOat", "faba", "chickpea", "lentil", "potato"],
+    secondBoostKeys: ["mung", "cowpea", "sesame", "barley"],
+  },
+  Fallow: {
+    avoidKeys: ["fallow", "rye"],
+    boostKeys: ["tomato", "canola", "sunflower", "chickpea", "wheat", "cotton"],
+    secondBoostKeys: ["soybean", "corn", "sesame", "lentil"],
+  },
 };
 
 const DEPLETING: PreviousCropType[] = ["Wheat", "Corn", "Rice", "Cotton", "Vegetables"];
@@ -104,53 +151,53 @@ const TEMPLATES: Template[] = [
   {
     id: "plan-market-cash",
     name: "Market Cash Rotation",
-    tagline: "Earns the most from market crops, with a bean crop to keep the soil fed",
+    tagline: "Maximizes harvest cash income while rotating plant families and feeding soil",
     focus: "profit",
     badge: "Best for More Money",
     bias: "profit",
     slots: [
-      ["tomato", "potato", "cotton", "corn", "sesame", "sunflower", "canola"],
-      ["soybean", "mung", "chickpea", "faba", "cowpea", "lentil"],
-      ["wheat", "barley", "corn", "sorghum", "millet", "rye"],
+      ["potato", "tomato", "canola", "chickpea", "faba", "cotton", "sesame", "corn", "sunflower"],
+      ["tomato", "cotton", "corn", "sesame", "soybean", "mung", "chickpea", "potato"],
+      ["wheat", "corn", "cotton", "sesame", "soybean", "barley", "chickpea", "sorghum", "berseem", "rye"],
     ],
   },
   {
     id: "plan-soil-builder",
     name: "Soil-Builder Rotation",
-    tagline: "Beans + grain + living cover — rebuilds soil nitrogen and organic matter",
+    tagline: "Beans + grain + living cover — rebuilds organic matter and cuts fertilizer bills",
     focus: "sustainability",
     badge: "Best for Healthy Soil",
     bias: "soil",
     slots: [
-      ["faba", "chickpea", "lentil", "soybean", "cowpea", "mung"],
-      ["wheat", "barley", "sorghum", "millet", "corn"],
-      ["berseem", "vetchOat", "sudangrass", "cowpea", "rye"],
+      ["faba", "chickpea", "lentil", "berseem", "vetchOat", "wheat", "canola"],
+      ["soybean", "mung", "cowpea", "sunflower", "sorghum", "corn", "wheat"],
+      ["berseem", "vetchOat", "sudangrass", "cowpea", "rye", "lentil"],
     ],
   },
   {
     id: "plan-weather-ready",
-    name: "Weather-Ready Rotation",
-    tagline: "Hardy crops that handle heat, dry spells and uncertain water",
+    name: "Weather & Water-Smart Rotation",
+    tagline: "Drought- and heat-hardy crops tuned to stretch tight irrigation supplies",
     focus: "water-saving",
     badge: "Best for Weather & Water",
     bias: "resilience",
     slots: [
-      ["sorghum", "millet", "barley", "chickpea", "sesame"],
-      ["cowpea", "chickpea", "lentil", "mung"],
-      ["vetchOat", "sudangrass", "barley", "rye"],
+      ["barley", "chickpea", "lentil", "canola", "sesame", "sorghum", "millet"],
+      ["sesame", "sorghum", "millet", "cowpea", "chickpea", "sunflower"],
+      ["millet", "cowpea", "mung", "sudangrass", "barley", "vetchOat", "rye"],
     ],
   },
   {
     id: "plan-balanced",
     name: "Balanced 3-Family Rotation",
-    tagline: "Oilseed → grain → beans: three plant families to break pests and spread risk",
+    tagline: "Three distinct plant families across the year to break pests and balance risk",
     focus: "sustainability",
     badge: "Balanced Choice",
     bias: "balanced",
     slots: [
-      ["canola", "sunflower", "sesame", "potato"],
-      ["wheat", "barley", "sorghum", "corn", "millet"],
-      ["lentil", "chickpea", "faba", "soybean", "cowpea", "berseem"],
+      ["canola", "potato", "wheat", "faba", "sunflower", "chickpea"],
+      ["sunflower", "sesame", "soybean", "corn", "sorghum", "cotton"],
+      ["lentil", "chickpea", "cowpea", "barley", "berseem", "vetchOat"],
     ],
   },
 ];
@@ -188,13 +235,15 @@ function evalCrop(
   crop: CropSpec,
   months: number[],
   climate: ClimateProfile,
-  dryFactor: number
+  dryFactor: number,
+  et0Factor: number
 ): SlotEval {
   const ms = months.map((m) => climate.monthly[m]);
   const fitCount = ms.filter((m) => m.tMeanC >= crop.tMin && m.tMeanC <= crop.tMax).length;
   const rainMm = ms.reduce((s, m) => s + m.rainMm, 0);
-  const needMm = Math.max(0, crop.waterMm - 0.75 * rainMm);
-  const dryNeedMm = Math.max(0, crop.waterMm - 0.75 * rainMm * dryFactor);
+  const adjustedCropMm = crop.waterMm * et0Factor;
+  const needMm = Math.max(0, adjustedCropMm - 0.75 * rainMm);
+  const dryNeedMm = Math.max(0, adjustedCropMm - 0.75 * rainMm * dryFactor);
   return {
     crop,
     months,
@@ -204,6 +253,204 @@ function evalCrop(
     dryNeedMm,
     avgTemp: ms.reduce((s, m) => s + m.tMeanC, 0) / ms.length,
   };
+}
+
+function scoreCropForSlot(
+  ev: SlotEval,
+  slotIdx: number,
+  prevFamily: string,
+  bias: Template["bias"],
+  inputs: FarmerGroundInputs,
+  climate: ClimateProfile,
+  lastRule: LastCropRule
+): number {
+  const crop = ev.crop;
+  const supplyM3 = Math.max(0, inputs.waterM3PerHa);
+  const rD = RISK_NUM[climate.risks.drought];
+  const rH = RISK_NUM[climate.risks.heat];
+  const rF = RISK_NUM[climate.risks.frost];
+
+  const ms = ev.months.map((m) => climate.monthly[m]);
+  const frostHit = ms.some((m) => m.tMinC <= 0) && crop.frostTol < 0.5;
+  const heatHit = ms.some((m) => m.tMaxC >= 36) && crop.heatTol < 0.6;
+
+  let score = ev.tempFit * 38;
+  if (frostHit) score -= 24;
+  if (heatHit) score -= 16;
+
+  // Enforce family diversity across consecutive plantings
+  if (crop.family === prevFamily) score -= 32;
+  if (crop.legume && prevFamily === "legume") score -= 14;
+
+  // Crop-specific previous-crop succession rules (Wheat vs Corn vs Rice vs Cotton vs Veg...)
+  if (slotIdx === 0) {
+    if (lastRule.avoidKeys.includes(crop.key)) score -= 55;
+    if (lastRule.boostKeys.includes(crop.key)) score += 26;
+  } else if (slotIdx === 1) {
+    if (lastRule.secondBoostKeys.includes(crop.key)) score += 16;
+  }
+
+  // Water supply gating & FAO ET0 demand scaling
+  const needM3 = ev.needMm * 10;
+  const share = supplyM3 * (slotIdx === 2 ? 0.35 : 0.48);
+  const overM3 = Math.max(0, needM3 - share);
+  const waterWeight =
+    inputs.priority === "water-saving" || bias === "resilience"
+      ? 0.009
+      : bias === "profit" && inputs.priority === "profit"
+        ? 0.004
+        : 0.006;
+  score -= overM3 * waterWeight;
+
+  if (supplyM3 <= 2200) {
+    // Low water mode: gate out heavy water users; prioritize drought-tolerant crops
+    if (crop.waterMm >= 460) score -= 75;
+    else if (crop.waterMm >= 400) score -= 28;
+    score += crop.droughtTol * 38;
+  } else if (supplyM3 <= 5500) {
+    // Medium water mode: reserve 580mm+ thirsty crops for high water; let potatoes/canola/sesame/faba/wheat shine
+    if (crop.waterMm >= 580) score -= 52;
+    else if (crop.waterMm >= 500) score -= 18;
+    if (crop.waterMm >= 340 && crop.waterMm <= 500) score += 14;
+  } else {
+    // Plenty of water: unlock high-value irrigated cash crops (tomatoes, cotton, corn, soybeans, potatoes)
+    if (crop.waterMm >= 480) score += 30;
+    else if (crop.waterMm >= 420) score += 14;
+  }
+
+  // Template specialty weight
+  if (bias === "profit") score += crop.revenue / 170;
+  if (bias === "soil") score += crop.nFix / 3.2 + crop.residue * 16;
+  if (bias === "resilience")
+    score +=
+      crop.droughtTol * (24 + rD * 6) +
+      crop.heatTol * (10 + rH * 6) +
+      crop.frostTol * rF * 5;
+  if (bias === "balanced")
+    score += crop.revenue / 360 + crop.nFix / 6 + crop.droughtTol * 12;
+
+  // Directly blend farmer's chosen goal (`inputs.priority`) into crop picks
+  if (inputs.priority === "profit") {
+    score += crop.revenue / 185;
+  } else if (inputs.priority === "sustainability") {
+    score += crop.nFix / 3.4 + crop.residue * 18;
+  } else {
+    score += crop.droughtTol * 34 - crop.waterMm * 0.045;
+  }
+
+  return score;
+}
+
+function buildMultiYearRoadmap(
+  tpl: Template,
+  year1Picks: SlotEval[],
+  year1Soil: number,
+  year1Rev: number,
+  climate: ClimateProfile,
+  dryFactor: number,
+  et0Factor: number,
+  inputs: FarmerGroundInputs
+): [YearRotationPlan, YearRotationPlan, YearRotationPlan] {
+  const startMonth = (new Date().getUTCMonth() + 1) % 12;
+  const lastRule: LastCropRule = {
+    avoidKeys: [year1Picks[0].crop.key],
+    boostKeys: [],
+    secondBoostKeys: [],
+  };
+
+  const simulateFollowUpYear = (
+    year: 2 | 3,
+    prevYearFirstCrop: CropSpec,
+    prevYearEndFamily: string,
+    baseSoil: number
+  ): {
+    plan: YearRotationPlan;
+    firstCrop: CropSpec;
+    endFamily: string;
+    soil: number;
+  } => {
+    const chosen: SlotEval[] = [];
+    let prevFamily = prevYearEndFamily;
+    for (let slotIdx = 0; slotIdx < 3; slotIdx++) {
+      const months = windowMonths(startMonth, slotIdx);
+      const pool = tpl.slots[slotIdx]
+        .map((k) => CROPS[k])
+        .filter((c): c is CropSpec => Boolean(c));
+      const candidates = pool
+        .filter((c) => !chosen.some((p) => p.crop.key === c.key))
+        .map((crop) => {
+          const ev = evalCrop(crop, months, climate, dryFactor, et0Factor);
+          let sc = scoreCropForSlot(
+            ev,
+            slotIdx,
+            prevFamily,
+            tpl.bias,
+            inputs,
+            climate,
+            lastRule
+          );
+          if (slotIdx === 0 && crop.family === prevYearFirstCrop.family) {
+            sc -= 38;
+          }
+          if (year === 2 && slotIdx === 0 && crop.legume) sc += 16;
+          if (year === 3 && slotIdx === 0 && !crop.cover) sc += 12;
+          return { ev, sc };
+        })
+        .filter((item) => item.ev.tempFit >= 0.45)
+        .sort((a, b) => b.sc - a.sc);
+
+      const pick =
+        candidates[0]?.ev ?? evalCrop(CROPS.fallow, months, climate, dryFactor, et0Factor);
+      chosen.push(pick);
+      prevFamily = pick.crop.family;
+    }
+
+    const legumeCount = chosen.filter((c) => c.crop.legume).length;
+    const soilGain = legumeCount > 0 ? 5 + legumeCount : 2;
+    const nextSoil = Math.round(clamp(baseSoil + soilGain, 25, 99));
+    const rawRev = chosen.reduce((s, p) => s + p.crop.revenue, 0);
+    // Healthy soil boosts subsequent year yield efficiency (+4% per yr)
+    const revAdjusted = Math.round(rawRev * (year === 2 ? 1.04 : 1.08));
+
+    return {
+      firstCrop: chosen[0].crop,
+      endFamily: prevFamily,
+      soil: nextSoil,
+      plan: {
+        year,
+        title:
+          year === 2
+            ? "Year 2 • Break Pests & Rebuild Soil"
+            : "Year 3 • Peak Fertility & Resilience",
+        crops: [chosen[0].crop.name, chosen[1].crop.name, chosen[2].crop.name],
+        soilHealthScore: nextSoil,
+        estimatedRevenuePerHaUsd: revAdjusted,
+        summary:
+          year === 2
+            ? `Rotates away from Year 1's ${prevYearFirstCrop.name} family to ${chosen[0].crop.name} so soil nutrients recover cleanly.`
+            : `Builds on 2 years of crop diversity with ${chosen[0].crop.name} → ${chosen[1].crop.name} for peak soil organic matter.`,
+      },
+    };
+  };
+
+  const y1Plan: YearRotationPlan = {
+    year: 1,
+    title: "Year 1 • Immediate Action",
+    crops: [year1Picks[0].crop.name, year1Picks[1].crop.name, year1Picks[2].crop.name],
+    soilHealthScore: year1Soil,
+    estimatedRevenuePerHaUsd: year1Rev,
+    summary: `Tailored immediately after your last ${inputs.lastCrop.toLowerCase()} harvest.`,
+  };
+
+  const y2 = simulateFollowUpYear(
+    2,
+    year1Picks[0].crop,
+    year1Picks[2].crop.family,
+    year1Soil
+  );
+  const y3 = simulateFollowUpYear(3, y2.firstCrop, y2.endFamily, y2.soil);
+
+  return [y1Plan, y2.plan, y3.plan];
 }
 
 export function generateRotationPlans(
@@ -218,81 +465,93 @@ export function generateRotationPlans(
     climate.driestYearRainMm && climate.annualRainMm > 0
       ? clamp(climate.driestYearRainMm / climate.annualRainMm, 0.3, 1)
       : 0.65;
+  const et0Factor = clamp((climate.annualEt0Mm ?? 1500) / 1500, 0.85, 1.18);
   const lastFamily = LAST_CROP_FAMILY[inputs.lastCrop];
+  const lastRule = LAST_CROP_RULES[inputs.lastCrop];
   const rD = RISK_NUM[climate.risks.drought];
   const rH = RISK_NUM[climate.risks.heat];
   const rF = RISK_NUM[climate.risks.frost];
   const rS = RISK_NUM[climate.risks.rainfallSwings];
 
+  const usedSignatures = new Set<string>();
+
   const built = TEMPLATES.map((tpl) => {
+    const rankedBySlot: Array<Array<{ score: number; ev: SlotEval }>> = [];
     const picks: SlotEval[] = [];
     let prevFamily: string = lastFamily;
 
     tpl.slots.forEach((keys, slotIdx) => {
       const months = windowMonths(startMonth, slotIdx);
-      let best: { score: number; ev: SlotEval } | null = null;
+      const slotOptions: Array<{ score: number; ev: SlotEval }> = [];
 
       for (const key of keys) {
         const crop = CROPS[key];
         if (!crop) continue;
         if (picks.some((p) => p.crop.key === key)) continue;
-        const ev = evalCrop(crop, months, climate, dryFactor);
-        if (ev.tempFit < 0.5) continue;
+        const ev = evalCrop(crop, months, climate, dryFactor, et0Factor);
+        if (ev.tempFit < 0.45) continue;
 
-        const ms = months.map((m) => climate.monthly[m]);
-        const frostHit = ms.some((m) => m.tMinC <= 0) && crop.frostTol < 0.5;
-        const heatHit = ms.some((m) => m.tMaxC >= 36) && crop.heatTol < 0.6;
-
-        let score = ev.tempFit * 40;
-        if (frostHit) score -= 25;
-        if (heatHit) score -= 15;
-        if (crop.family === prevFamily) score -= 25;
-        if (crop.legume && prevFamily === "legume") score -= 10;
-
-        const needM3 = ev.needMm * 10;
-        const share = supplyM3 / 3;
-        const overM3 = Math.max(0, needM3 - share);
-        const waterWeight = tpl.bias === "resilience" ? 0.012 : tpl.bias === "profit" ? 0.004 : 0.008;
-        score -= overM3 * waterWeight;
-
-        if (tpl.bias === "profit") score += crop.revenue / 150;
-        if (tpl.bias === "soil") score += crop.nFix / 4 + crop.residue * 12;
-        if (tpl.bias === "resilience")
-          score += crop.droughtTol * (20 + rD * 6) + crop.heatTol * (8 + rH * 6) + crop.frostTol * rF * 5;
-        if (tpl.bias === "balanced")
-          score += crop.revenue / 400 + crop.nFix / 8 + crop.droughtTol * 10;
-
-        if (!best || score > best.score) best = { score, ev };
+        const score = scoreCropForSlot(
+          ev,
+          slotIdx,
+          prevFamily,
+          tpl.bias,
+          inputs,
+          climate,
+          lastRule
+        );
+        slotOptions.push({ score, ev });
       }
 
-      const chosen = best?.ev ?? evalCrop(CROPS.fallow, months, climate, dryFactor);
+      slotOptions.sort((a, b) => b.score - a.score);
+      rankedBySlot.push(slotOptions);
+
+      const chosen =
+        slotOptions[0]?.ev ??
+        evalCrop(CROPS.fallow, months, climate, dryFactor, et0Factor);
       picks.push(chosen);
       prevFamily = chosen.crop.family;
     });
 
+    // Guarantee 4 distinct rotation sequences even under narrow water/temp bounds
+    let sig = picks.map((p) => p.crop.key).join(">");
+    if (usedSignatures.has(sig)) {
+      outer: for (let sIdx = 0; sIdx < 3; sIdx++) {
+        for (const alt of rankedBySlot[sIdx]) {
+          if (
+            picks.some((p, pi) => pi !== sIdx && p.crop.key === alt.ev.crop.key)
+          ) {
+            continue;
+          }
+          const candidateSig = picks
+            .map((p, pi) => (pi === sIdx ? alt.ev.crop.key : p.crop.key))
+            .join(">");
+          if (!usedSignatures.has(candidateSig)) {
+            picks[sIdx] = alt.ev;
+            sig = candidateSig;
+            break outer;
+          }
+        }
+      }
+    }
+    usedSignatures.add(sig);
+
     return { tpl, picks };
   });
 
-  // Remove duplicate rotations (same crops in same order)
-  const unique = built.filter(
-    (b, i) =>
-      built.findIndex(
-        (o) => o.picks.map((p) => p.crop.key).join(">") === b.picks.map((p) => p.crop.key).join(">")
-      ) === i
-  );
-
-  const revenues = unique.map((u) => u.picks.reduce((s, p) => s + p.crop.revenue, 0));
+  const revenues = built.map((u) => u.picks.reduce((s, p) => s + p.crop.revenue, 0));
   const maxRev = Math.max(...revenues);
   const minRev = Math.min(...revenues);
 
-  const plans: CropCyclePlan[] = unique.map(({ tpl, picks }, idx) => {
+  const plans: CropCyclePlan[] = built.map(({ tpl, picks }, idx) => {
     const crops = picks.map((p) => p.crop);
     const families = new Set(crops.map((c) => c.family).filter((f) => f !== "fallow"));
     const legumes = crops.filter((c) => c.legume);
     const hasCover = crops.some((c) => c.cover && c.key !== "fallow");
     const nBalance = crops.reduce((s, c) => s + c.nFix - 0.5 * c.nUse, 0);
     const residue = crops.reduce((s, c) => s + c.residue, 0);
-    const breaksLast = crops[0].family !== lastFamily;
+    const breaksLast =
+      crops[0].family !== lastFamily && !lastRule.avoidKeys.includes(crops[0].key);
 
     // ---- Soil Health ----
     let soil =
@@ -306,7 +565,7 @@ export function generateRotationPlans(
       (DEPLETING.includes(inputs.lastCrop) && crops[0].legume ? 6 : 0);
     soil = Math.round(clamp(soil, 20, 98));
 
-    // ---- Water need (normal vs dry year) ----
+    // ---- Water need (normal vs dry year, scaled by NASA ET0) ----
     const needM3 = Math.round(picks.reduce((s, p) => s + p.needMm, 0) * 10);
     const dryNeedM3 = Math.round(picks.reduce((s, p) => s + p.dryNeedMm, 0) * 10);
     const ratio = needM3 > 0 ? supplyM3 / needM3 : 2;
@@ -342,7 +601,7 @@ export function generateRotationPlans(
     };
     const [wp, ws, wr] = weights[inputs.priority];
     let match = profit * wp + soil * ws + resilience * wr;
-    if (waterStatus === "deficit") match -= 15;
+    if (waterStatus === "deficit") match -= 16;
     else if (waterStatus === "tight") match -= 5;
     const matchScore = Math.round(clamp(match, 35, 99));
 
@@ -355,6 +614,17 @@ export function generateRotationPlans(
       role: p.crop.role,
     })) as [CropCycleStage, CropCycleStage, CropCycleStage];
 
+    const threeYearCycle = buildMultiYearRoadmap(
+      tpl,
+      picks,
+      soil,
+      revPerHa,
+      climate,
+      dryFactor,
+      et0Factor,
+      inputs
+    );
+
     // ---- Plain-language reasons ----
     const why: string[] = [];
     const firstLegume = legumes[0];
@@ -365,26 +635,26 @@ export function generateRotationPlans(
     }
     if (breaksLast && lastFamily !== "none" && lastFamily !== "perennial") {
       why.push(
-        `Starts with ${crops[0].name}, a different plant family from your last crop (${inputs.lastCrop}) — this breaks pest and disease cycles.`
+        `Starts with ${crops[0].name} after ${inputs.lastCrop} — breaking pest and soil disease carry-over.`
       );
     } else if (!breaksLast) {
       why.push(
-        `Note: ${crops[0].name} is the same plant family as your last crop (${inputs.lastCrop}) — watch for carried-over pests.`
+        `Note: ${crops[0].name} shares traits with your last crop (${inputs.lastCrop}) — scout early for carried-over pests.`
       );
     }
     why.push(
-      `NASA data: about ${climate.annualRainMm.toLocaleString()} mm of rain a year here, with ${
+      `NASA climate: ~${climate.annualRainMm.toLocaleString()} mm rain & ~${(
+        climate.annualEt0Mm ?? 1350
+      ).toLocaleString()} mm crop evaporation/yr, with ${
         climate.dryMonths.length
       } dry month${climate.dryMonths.length === 1 ? "" : "s"}${
         climate.dryMonths.length ? ` (${listMonths(climate.dryMonths)})` : ""
-      }. ${picks[1].crop.name} fits ${windowLabel(picks[1].months)} temperatures (avg ${Math.round(
-        picks[1].avgTemp
-      )}°C).`
+      }.`
     );
     if (climate.driestYear && climate.driestYearRainMm !== null) {
       why.push(
-        `In a dry year like ${climate.driestYear} (${climate.driestYearRainMm.toLocaleString()} mm rain), this plan needs about ${dryNeedM3.toLocaleString()} m³/ha of irrigation — ${
-          dryNeedM3 <= supplyM3 ? "still within your water supply." : "more than your water supply."
+        `In a dry year like ${climate.driestYear} (${climate.driestYearRainMm.toLocaleString()} mm rain), this plan needs ~${dryNeedM3.toLocaleString()} m³/ha — ${
+          dryNeedM3 <= supplyM3 ? "within your water supply." : "above your water supply."
         }`
       );
     }
@@ -410,7 +680,7 @@ export function generateRotationPlans(
     }
     if (climate.risks.rainfallSwings === "high" && climate.rainVariabilityPct !== null) {
       cautions.push(
-        `Rain here changes a lot from year to year (about ±${climate.rainVariabilityPct}%) — keep seed of a low-water backup crop.`
+        `Rain here swings from year to year (±${climate.rainVariabilityPct}%) — keep seed of a low-water backup crop.`
       );
     }
 
@@ -422,19 +692,19 @@ export function generateRotationPlans(
       crops[0].key !== "fallow"
     ) {
       actions.push(
-        `NASA shows your topsoil is dry right now (${climate.recent.topsoilWetnessPct}% wetness) — water before sowing ${crops[0].name}.`
+        `NASA shows dry topsoil right now (${climate.recent.topsoilWetnessPct}% wetness) — pre-water before sowing ${crops[0].name}.`
       );
     }
     if (legumes.length) {
-      actions.push("Ask your seed shop for bean “inoculant” powder — it helps beans make more free fertilizer.");
+      actions.push("Use legume inoculant powder at planting so beans fix maximum free nitrogen.");
     }
     if (hasCover || residue >= 2) {
-      actions.push("Don't burn crop leftovers — chop them and leave them on top of the soil to feed it and hold moisture.");
+      actions.push("Chop crop residues instead of burning them to hold moisture and boost topsoil carbon.");
     }
     if (rD >= 1 || rH >= 1) {
-      actions.push("Water early morning or evening, and spread straw mulch between rows to cut water loss.");
+      actions.push("Irrigate early morning or dusk and mulch rows to cut sun evaporation.");
     }
-    actions.push("Check the NASA soil-moisture layer on the 2D map each week before you irrigate.");
+    actions.push("Check NASA SMAP soil moisture on the 2D map weekly before scheduling irrigation.");
 
     return {
       id: tpl.id,
@@ -456,6 +726,7 @@ export function generateRotationPlans(
       whyItFits: why.slice(0, 4),
       actionSteps: actions.slice(0, 3),
       cautions: cautions.slice(0, 3),
+      threeYearCycle,
     };
   });
 

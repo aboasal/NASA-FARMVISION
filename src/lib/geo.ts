@@ -24,6 +24,59 @@ export const FIELD_COLORS = [
   "#14b8a6", // teal
 ];
 
+function segmentsIntersect(
+  a: LatLngPoint,
+  b: LatLngPoint,
+  c: LatLngPoint,
+  d: LatLngPoint
+): boolean {
+  const ccw = (p1: LatLngPoint, p2: LatLngPoint, p3: LatLngPoint) =>
+    (p3[0] - p1[0]) * (p2[1] - p1[1]) > (p2[0] - p1[0]) * (p3[1] - p1[1]);
+  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+}
+
+export function hasSelfIntersection(points: LatLngPoint[]): boolean {
+  const n = points.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    const a1 = points[i];
+    const a2 = points[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const b1 = points[j];
+      const b2 = points[(j + 1) % n];
+      if (segmentsIntersect(a1, a2, b1, b2)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Untangles polygon corners (such as 4-pin squares clicked in row-by-row
+ * or diagonal Z-order) into a simple perimeter ring without self-intersecting
+ * "hourglass" edges, preserving points[0] as the first vertex.
+ */
+export function orderPolygonVertices(points: LatLngPoint[]): LatLngPoint[] {
+  if (points.length < 3) return points;
+  if (points.length >= 4 || hasSelfIntersection(points)) {
+    const meanLat = points.reduce((s, p) => s + p[0], 0) / points.length;
+    const meanLng = points.reduce((s, p) => s + p[1], 0) / points.length;
+    const indexed = points.map((pt, idx) => ({
+      pt,
+      idx,
+      angle: Math.atan2(pt[0] - meanLat, pt[1] - meanLng),
+    }));
+    indexed.sort((a, b) => a.angle - b.angle);
+    const firstPos = indexed.findIndex((item) => item.idx === 0);
+    const rotated =
+      firstPos > 0
+        ? [...indexed.slice(firstPos), ...indexed.slice(0, firstPos)]
+        : indexed;
+    return rotated.map((item) => item.pt);
+  }
+  return points;
+}
+
 /**
  * Computes geodesic area (hectares & acres), perimeter (meters),
  * and centroid [lat, lng] for a polygon defined by [lat, lng] points.
@@ -45,8 +98,10 @@ export function computePolygonMetrics(points: LatLngPoint[]): {
     };
   }
 
+  const ordered = orderPolygonVertices(points);
+
   // GeoJSON uses [lng, lat] and requires a closed ring
-  const ring: [number, number][] = points.map(([lat, lng]) => [lng, lat]);
+  const ring: [number, number][] = ordered.map(([lat, lng]) => [lng, lat]);
   const first = ring[0];
   const last = ring[ring.length - 1];
   if (first[0] !== last[0] || first[1] !== last[1]) {
@@ -78,12 +133,13 @@ export function createFarmField(
   coordinates: LatLngPoint[],
   colorIndex = 0
 ): FarmField {
-  const metrics = computePolygonMetrics(coordinates);
+  const orderedCoords = orderPolygonVertices(coordinates);
+  const metrics = computePolygonMetrics(orderedCoords);
   return {
     id: `field-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name,
     crop,
-    coordinates,
+    coordinates: orderedCoords,
     ...metrics,
     color: FIELD_COLORS[colorIndex % FIELD_COLORS.length],
     createdAt: new Date().toISOString(),

@@ -13,7 +13,7 @@ import {
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { Check, RotateCcw, Trash2, X } from "lucide-react";
-import { computePolygonMetrics } from "@/lib/geo";
+import { computePolygonMetrics, orderPolygonVertices } from "@/lib/geo";
 import { getNasaGibsLayers } from "@/lib/nasa";
 import { MAP_TO_GLOBE_ZOOM } from "@/lib/view";
 import type {
@@ -148,18 +148,24 @@ function FarmMap({
     return layers.find((l) => l.id === gibsLayer) ?? layers[0];
   }, [gibsLayer, gibsDate]);
 
-  const liveMetrics = useMemo(
-    () => computePolygonMetrics(draftPoints),
+  const orderedDraftPoints = useMemo(
+    () => orderPolygonVertices(draftPoints),
     [draftPoints]
   );
 
-  // Build rubber-band preview lines while drawing
+  const liveMetrics = useMemo(
+    () => computePolygonMetrics(orderedDraftPoints),
+    [orderedDraftPoints]
+  );
+
+  // Build rubber-band preview lines while drawing (untangled when closing 3+ points)
   const previewLine = useMemo(() => {
     if (!isDrawing || draftPoints.length === 0 || !hoverPoint) return null;
-    const last = draftPoints[draftPoints.length - 1];
     if (draftPoints.length >= 2) {
-      return [last, hoverPoint, draftPoints[0]];
+      const previewRing = orderPolygonVertices([...draftPoints, hoverPoint]);
+      return [...previewRing, previewRing[0]];
     }
+    const last = draftPoints[draftPoints.length - 1];
     return [last, hoverPoint];
   }, [isDrawing, draftPoints, hoverPoint]);
 
@@ -245,9 +251,9 @@ function FarmMap({
         })}
 
         {/* Active Draft Polygon */}
-        {isDrawing && draftPoints.length >= 3 && (
+        {isDrawing && orderedDraftPoints.length >= 3 && (
           <Polygon
-            positions={draftPoints}
+            positions={orderedDraftPoints}
             pathOptions={{
               color: "#10b981",
               weight: 2.5,
@@ -257,7 +263,7 @@ function FarmMap({
           />
         )}
 
-        {isDrawing && draftPoints.length === 2 && (
+        {isDrawing && draftPoints.length === 2 && !hoverPoint && (
           <Polyline
             positions={draftPoints}
             pathOptions={{ color: "#10b981", weight: 2.5 }}

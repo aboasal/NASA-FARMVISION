@@ -521,6 +521,7 @@ export function generateCropCyclePlans(
     prevInfo.nitrogenImpact === "depletes-moderate";
   const hasNitrogenCredit = prevInfo.nitrogenImpact === "fixes-nitrogen";
   const availableWater = Math.max(inputs.waterM3PerHa, 0);
+  const isLowWater = availableWater <= 2200 || inputs.waterTier === "low";
   const effectiveAreaHa = Math.max(field.areaHectares, 0.1);
 
   type CandidateSpec = Omit<
@@ -531,164 +532,323 @@ export function generateCropCyclePlans(
   const avoidRepeatVeg = inputs.lastCrop === "Vegetables";
   const avoidRepeatCorn = inputs.lastCrop === "Corn";
   const avoidRepeatWheat = inputs.lastCrop === "Wheat";
+  const avoidRepeatRice = inputs.lastCrop === "Rice";
+
+  const marketCrop1 = isLowWater
+    ? "Sesame"
+    : avoidRepeatVeg
+      ? isWarmClimate
+        ? "Sunflower"
+        : "Canola (Rapeseed)"
+      : hasNitrogenCredit || inputs.priority === "profit"
+        ? "Tomatoes"
+        : "Potatoes";
+  const marketCrop2 = isLowWater
+    ? "Chickpeas"
+    : avoidRepeatCorn
+      ? "Soybeans"
+      : isWarmClimate
+        ? "Corn (Maize)"
+        : "Faba Beans";
+  const marketCrop3 =
+    inputs.priority === "sustainability"
+      ? "Berseem Clover"
+      : isLowWater
+        ? "Grain Sorghum"
+        : "Barley";
+
+  const soilCrop1 = hasNitrogenCredit
+    ? avoidRepeatWheat
+      ? "Barley"
+      : "Wheat"
+    : avoidRepeatCorn || avoidRepeatRice
+      ? "Lentils"
+      : "Faba Beans";
+  const soilCrop2 = isLowWater
+    ? "Grain Sorghum"
+    : avoidRepeatWheat
+      ? "Sunflower"
+      : "Wheat";
+  const soilCrop3 = isLowWater ? "Cowpeas" : "Berseem Clover";
+
+  const balancedCrop1 =
+    inputs.lastCrop === "Cotton"
+      ? "Wheat"
+      : inputs.priority === "profit" && !isLowWater
+        ? "Potatoes"
+        : "Sunflower";
+  const balancedCrop2 = avoidRepeatCorn ? "Barley" : "Grain Sorghum";
+  const balancedCrop3 = hasNitrogenCredit ? "Winter Rye Cover" : "Chickpeas";
 
   const candidates: CandidateSpec[] = [
     {
-      id: "plan-high-revenue",
-      name: "High-Cash Market Plan",
-      tagline: avoidRepeatVeg
-        ? "Focuses on high-selling oilseeds and grains while giving vegetable soil a break"
-        : "Focuses on fast-selling market crops to maximize your yearly cash income",
+      id: "plan-market-cash",
+      name: "Market Cash Rotation",
+      tagline: isLowWater
+        ? "Targets highest-value dryland cash crops suited to tight irrigation"
+        : "Maximizes harvest cash income while rotating plant families",
       recommendedFor: "profit",
-      waterNeededM3PerHa: isWarmClimate ? 5400 : 4800,
-      estimatedRevenuePerHaUsd: isWarmClimate ? 4850 : 4200,
-      soilHealthScore: hasNitrogenCredit ? 74 : 62,
+      waterNeededM3PerHa: isLowWater ? 2100 : isWarmClimate ? 5200 : 4600,
+      dryYearWaterNeedM3PerHa: isLowWater ? 2500 : 6100,
+      estimatedRevenuePerHaUsd: isLowWater ? 4650 : 8400,
+      soilHealthScore: hasNitrogenCredit ? 76 : 64,
       profitScore: 95,
-      waterEfficiencyScore: 54,
+      waterEfficiencyScore: isLowWater ? 82 : 56,
+      resilienceScore: isLowWater ? 80 : 58,
       stages: [
         {
-          season: "1st Planting (Months 1–4)",
-          crop: avoidRepeatVeg
-            ? isWarmClimate
-              ? "Sunflower (Oilseed)"
-              : "Malting Barley"
-            : hasNitrogenCredit
-              ? "Tomatoes or Sweet Peppers"
-              : "Fresh Market Vegetables",
-          durationMonths: "4 mos",
-          role: "Top-earning harvest to bring in quick cash first.",
+          season: "1st Planting",
+          crop: marketCrop1,
+          durationMonths: "Months 1–4",
+          role: "Top-earning harvest tailored to your water & last crop.",
         },
         {
-          season: "2nd Planting (Months 5–8)",
-          crop: avoidRepeatCorn
-            ? "Dry Beans or Green Soybeans"
-            : isWarmClimate
-              ? "Sweet Corn"
-              : "Potatoes",
-          durationMonths: "4 mos",
-          role: "Second warm-weather cash crop that changes plant families.",
+          season: "2nd Planting",
+          crop: marketCrop2,
+          durationMonths: "Months 5–8",
+          role: "Complementary legume or summer crop restoring nitrogen.",
         },
         {
-          season: "3rd Planting (Months 9–12)",
-          crop: "Clover or Cowpeas (Soil Rest)",
-          durationMonths: "3–4 mos",
-          role: "Feeds tired soil naturally so next year's harvest stays strong.",
+          season: "3rd Planting",
+          crop: marketCrop3,
+          durationMonths: "Months 9–12",
+          role: "Breaks pest cycles and protects soil structure.",
+        },
+      ],
+      threeYearCycle: [
+        {
+          year: 1,
+          title: "Year 1 • Immediate Action",
+          crops: [marketCrop1, marketCrop2, marketCrop3],
+          soilHealthScore: hasNitrogenCredit ? 76 : 64,
+          estimatedRevenuePerHaUsd: isLowWater ? 4650 : 8400,
+          summary: `Starts with ${marketCrop1} after your ${inputs.lastCrop.toLowerCase()} harvest.`,
+        },
+        {
+          year: 2,
+          title: "Year 2 • Break Pests & Rebuild Soil",
+          crops: ["Faba Beans", "Grain Sorghum", "Cowpeas"],
+          soilHealthScore: hasNitrogenCredit ? 84 : 74,
+          estimatedRevenuePerHaUsd: isLowWater ? 4850 : 8750,
+          summary: "Rotates to deep-root legumes so nutrients recharge naturally.",
+        },
+        {
+          year: 3,
+          title: "Year 3 • Peak Fertility & Resilience",
+          crops: [isLowWater ? "Chickpeas" : "Potatoes", "Soybeans", "Barley"],
+          soilHealthScore: hasNitrogenCredit ? 90 : 82,
+          estimatedRevenuePerHaUsd: isLowWater ? 5050 : 9100,
+          summary: "Combines built-up organic matter with high-value rotation.",
         },
       ],
       whyItFits: [
-        hasNitrogenCredit
-          ? `Your last crop (${inputs.lastCrop}) already left free plant food in the ground for your first planting.`
-          : `Adds a quick clover or cowpea planting at the end of the year to restore soil strength after ${inputs.lastCrop}.`,
-        `Local weather (${avgTempC.toFixed(0)}°C average with plenty of sun) helps market crops ripen fast.`,
-        availableWater >= 4800
-          ? `Your water level (${availableWater.toLocaleString()} m³/ha) is enough to size up fruit and vegetables well.`
-          : `Uses lots of water—best on a smaller drip-watered patch if your water stays around ${availableWater.toLocaleString()} m³/ha.`,
+        `Selects ${marketCrop1} after ${inputs.lastCrop} so pests and diseases don't carry over.`,
+        `Weather (~${avgTempC.toFixed(0)}°C avg) matches this planting schedule.`,
       ],
       actionSteps: [
-        "Use drip lines if you can—it puts water straight to the roots and boosts profit.",
-        avoidRepeatVeg
-          ? "Give tomato and vegetable beds a break this season so root sickness does not spread."
-          : "Split fertilizer into 2 or 3 smaller feedings instead of all at once.",
-        "Check local market buyers 3 weeks before harvest so crops sell fresh at a better price.",
+        "Use drip or furrow timing early morning to minimize evaporation loss.",
+        "Monitor soil moisture in the NASA 2D layer before fertilizing.",
       ],
     },
     {
-      id: "plan-soil-longevity",
-      name: "Healthy Soil & Steady Yield Plan",
-      tagline:
-        "Keeps your land fertile for years to come while cutting fertilizer costs",
+      id: "plan-soil-builder",
+      name: "Soil-Builder Rotation",
+      tagline: "Beans + grain + living cover — rebuilds organic matter naturally",
       recommendedFor: "sustainability",
-      waterNeededM3PerHa: 3400,
-      estimatedRevenuePerHaUsd: 3250,
-      soilHealthScore: 96,
+      waterNeededM3PerHa: isLowWater ? 2000 : 3400,
+      dryYearWaterNeedM3PerHa: isLowWater ? 2350 : 4100,
+      estimatedRevenuePerHaUsd: 3580,
+      soilHealthScore: 95,
       profitScore: 76,
-      waterEfficiencyScore: 80,
+      waterEfficiencyScore: 84,
+      resilienceScore: 84,
       stages: [
         {
-          season: "1st Planting (Months 1–4)",
-          crop: needsNitrogenRecovery
-            ? "Fava Beans or Soybeans"
-            : avoidRepeatWheat
-              ? "Chickpeas or Lentils"
-              : "Winter Wheat with Clover",
-          durationMonths: "4 mos",
-          role: needsNitrogenRecovery
-            ? `Puts natural fertilizer back after ${inputs.lastCrop} took soil nutrients.`
-            : "Loosens soil gently and builds rich topsoil structure.",
+          season: "1st Planting",
+          crop: soilCrop1,
+          durationMonths: "Months 1–4",
+          role: "Rebuilds soil nitrogen and loosens topsoil after harvest.",
         },
         {
-          season: "2nd Planting (Months 5–8)",
-          crop: avoidRepeatCorn
-            ? "Grain Sorghum"
-            : isWarmClimate
-              ? "Millet & Sesame Mix"
-              : "Oats or Bread Wheat",
-          durationMonths: "4 mos",
-          role: "Uses the free plant food left behind by the first bean crop.",
+          season: "2nd Planting",
+          crop: soilCrop2,
+          durationMonths: "Months 5–8",
+          role: "Converts free legume nitrogen into dependable grain.",
         },
         {
-          season: "3rd Planting (Months 9–12)",
-          crop: "Soil Cover Grass & Vetch",
-          durationMonths: "3–4 mos",
-          role: "Covers bare dirt so sun and wind cannot dry or wash away topsoil.",
+          season: "3rd Planting",
+          crop: soilCrop3,
+          durationMonths: "Months 9–12",
+          role: "Living cover protecting moisture and topsoil.",
+        },
+      ],
+      threeYearCycle: [
+        {
+          year: 1,
+          title: "Year 1 • Immediate Action",
+          crops: [soilCrop1, soilCrop2, soilCrop3],
+          soilHealthScore: 95,
+          estimatedRevenuePerHaUsd: 3580,
+          summary: `Rebuilds organic matter right after ${inputs.lastCrop.toLowerCase()}.`,
+        },
+        {
+          year: 2,
+          title: "Year 2 • Break Pests & Rebuild Soil",
+          crops: ["Sunflower", "Chickpeas", "Vetch & Oat Cover Mix"],
+          soilHealthScore: 97,
+          estimatedRevenuePerHaUsd: 3720,
+          summary: "Alternates deep-taproot oilseeds and pulses.",
+        },
+        {
+          year: 3,
+          title: "Year 3 • Peak Fertility & Resilience",
+          crops: ["Soybeans", "Barley", "Winter Rye Cover"],
+          soilHealthScore: 99,
+          estimatedRevenuePerHaUsd: 3860,
+          summary: "Sustains peak soil carbon and low fertilizer costs.",
         },
       ],
       whyItFits: [
         `Directly helps your land recover after ${inputs.lastCrop}: ${prevInfo.soilEffect}`,
-        `NASA satellites show ${soilWetnessPct}% soil moisture and ${totalRainMm.toFixed(0)} mm recent rain—the final cover crop locks moisture in.`,
-        `Needs medium water (~3,400 m³/ha), keeping your pump or well bills steady.`,
+        `NASA data shows ${soilWetnessPct}% soil moisture and ${totalRainMm.toFixed(0)} mm recent rain.`,
       ],
       actionSteps: [
-        "Sow beans or peas first so they naturally add free nitrogen to the dirt.",
-        "Leave chopped crop stalks on top of the soil instead of deep plowing—this holds moisture.",
-        "Save half your usual fertilizer bill next season thanks to the bean-and-cover cycle.",
+        "Use legume inoculant at planting for maximum natural nitrogen.",
+        "Leave chopped stalks as mulch instead of burning them.",
       ],
     },
     {
-      id: "plan-water-smart",
-      name: "Low-Water Safe Harvest Plan",
-      tagline:
-        "Protects you from dry spells with hardy crops that need very little irrigation",
+      id: "plan-weather-ready",
+      name: "Weather & Water-Smart Rotation",
+      tagline: "Drought- and heat-hardy crops built for tight water and hot weather",
       recommendedFor: "water-saving",
-      waterNeededM3PerHa: 1850,
-      estimatedRevenuePerHaUsd: 2650,
-      soilHealthScore: 84,
-      profitScore: 68,
-      waterEfficiencyScore: 97,
+      waterNeededM3PerHa: 1750,
+      dryYearWaterNeedM3PerHa: 2100,
+      estimatedRevenuePerHaUsd: 3900,
+      soilHealthScore: 86,
+      profitScore: 72,
+      waterEfficiencyScore: 96,
+      resilienceScore: 96,
       stages: [
         {
-          season: "1st Planting (Months 1–4)",
-          crop:
-            inputs.lastCrop === "Wheat"
-              ? "Chickpeas or Dry Peas"
-              : "Hardy Barley or Durum Wheat",
-          durationMonths: "4 mos",
-          role: "Grows well on light winter rain and damp soil left in the ground.",
+          season: "1st Planting",
+          crop: inputs.lastCrop === "Wheat" ? "Chickpeas" : "Barley",
+          durationMonths: "Months 1–4",
+          role: "Thrives on light moisture and establishes quickly.",
         },
         {
-          season: "2nd Planting (Months 5–8)",
-          crop: isWarmClimate ? "Sesame or Pearl Millet" : "Buckwheat or Flax",
-          durationMonths: "3.5 mos",
-          role: "Heat-tough cash crop that survives dry weeks without failing.",
+          season: "2nd Planting",
+          crop: isWarmClimate ? "Sesame" : "Lentils",
+          durationMonths: "Months 5–8",
+          role: "Heat-hardy cash crop that copes with dry spells.",
         },
         {
-          season: "3rd Planting (Months 9–12)",
-          crop: "Short Cowpeas + Straw Cover",
-          durationMonths: "3 mos",
-          role: "Shades the ground and keeps precious soil moisture from drying out.",
+          season: "3rd Planting",
+          crop: "Pearl Millet",
+          durationMonths: "Months 9–12",
+          role: "Ultra-hardy grain with deep roots and low irrigation need.",
+        },
+      ],
+      threeYearCycle: [
+        {
+          year: 1,
+          title: "Year 1 • Immediate Action",
+          crops: [inputs.lastCrop === "Wheat" ? "Chickpeas" : "Barley", isWarmClimate ? "Sesame" : "Lentils", "Pearl Millet"],
+          soilHealthScore: 86,
+          estimatedRevenuePerHaUsd: 3900,
+          summary: "Low-water starter rotation tailored for weather safety.",
+        },
+        {
+          year: 2,
+          title: "Year 2 • Break Pests & Rebuild Soil",
+          crops: ["Lentils", "Grain Sorghum", "Cowpeas"],
+          soilHealthScore: 91,
+          estimatedRevenuePerHaUsd: 4060,
+          summary: "Alternates legumes and drought-tolerant cereals.",
+        },
+        {
+          year: 3,
+          title: "Year 3 • Peak Fertility & Resilience",
+          crops: ["Sesame", "Chickpeas", "Sorghum-Sudangrass Cover"],
+          soilHealthScore: 95,
+          estimatedRevenuePerHaUsd: 4210,
+          summary: "Long-term resilience even in repeated dry seasons.",
         },
       ],
       whyItFits: [
         isDryTopsoil
-          ? `NASA readings show dry soil (${soilWetnessPct}% moisture)—this low-water plan cuts irrigation needs down to ~1,850 m³/ha.`
-          : `Saves well and canal water while still giving a dependable harvest every season.`,
-        `Swapping away from ${inputs.lastCrop} breaks stubborn weeds and root pests naturally.`,
-        `Fits easily within a ${availableWater.toLocaleString()} m³/ha water supply with low drought risk.`,
+          ? `Dry soil reading (${soilWetnessPct}%) makes low-water hardy crops safest.`
+          : `Keeps water demand low (~1,750 m³/ha) across all seasons.`,
       ],
       actionSteps: [
-        "Save your watering for flowering and seed-filling weeks when plants need it most.",
-        "Spread dry straw between rows to cut sun water loss by about a quarter.",
-        "Water early morning or at dusk so hot sun doesn't dry water away.",
+        "Save irrigation turns for flowering and seed-filling stages.",
+        "Cover bare rows with straw mulch to slow sun evaporation.",
+      ],
+    },
+    {
+      id: "plan-balanced",
+      name: "Balanced 3-Family Rotation",
+      tagline: "Three plant families across the year to break pests and spread risk",
+      recommendedFor: "sustainability",
+      waterNeededM3PerHa: isLowWater ? 2050 : 3200,
+      dryYearWaterNeedM3PerHa: isLowWater ? 2400 : 3850,
+      estimatedRevenuePerHaUsd: 4350,
+      soilHealthScore: 89,
+      profitScore: 82,
+      waterEfficiencyScore: 86,
+      resilienceScore: 86,
+      stages: [
+        {
+          season: "1st Planting",
+          crop: balancedCrop1,
+          durationMonths: "Months 1–4",
+          role: "Distinct family opening crop to interrupt field pests.",
+        },
+        {
+          season: "2nd Planting",
+          crop: balancedCrop2,
+          durationMonths: "Months 5–8",
+          role: "Steady grain crop leveraging deep root structure.",
+        },
+        {
+          season: "3rd Planting",
+          crop: balancedCrop3,
+          durationMonths: "Months 9–12",
+          role: "Restores soil organic matter and nitrogen balance.",
+        },
+      ],
+      threeYearCycle: [
+        {
+          year: 1,
+          title: "Year 1 • Immediate Action",
+          crops: [balancedCrop1, balancedCrop2, balancedCrop3],
+          soilHealthScore: 89,
+          estimatedRevenuePerHaUsd: 4350,
+          summary: "Balanced oilseed, grain, and legume diversity.",
+        },
+        {
+          year: 2,
+          title: "Year 2 • Break Pests & Rebuild Soil",
+          crops: ["Faba Beans", "Wheat", "Vetch & Oat Cover Mix"],
+          soilHealthScore: 94,
+          estimatedRevenuePerHaUsd: 4520,
+          summary: "Swaps plant families again in Year 2.",
+        },
+        {
+          year: 3,
+          title: "Year 3 • Peak Fertility & Resilience",
+          crops: ["Canola (Rapeseed)", "Chickpeas", "Barley"],
+          soilHealthScore: 97,
+          estimatedRevenuePerHaUsd: 4690,
+          summary: "Sustains balanced revenue and resilient soil.",
+        },
+      ],
+      whyItFits: [
+        `Uses 3 different plant families after ${inputs.lastCrop} to avoid monoculture stress.`,
+      ],
+      actionSteps: [
+        "Rotate planting dates slightly if early heat is forecast.",
+        "Track each family sequence across Years 1–3.",
       ],
     },
   ];
@@ -724,7 +884,7 @@ export function generateCropCyclePlans(
       score -= 6;
     }
 
-    if (needsNitrogenRecovery && plan.id === "plan-soil-longevity") {
+    if (needsNitrogenRecovery && plan.id === "plan-soil-builder") {
       score += 4;
     }
 

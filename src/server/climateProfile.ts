@@ -7,6 +7,10 @@ export const MONTH_LABELS = [
 ];
 const DAYS_IN_MONTH = [31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
 function mean(values: number[]): number {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 }
@@ -52,6 +56,21 @@ export function buildClimateProfile(
 
   const annualRainMm = monthly.reduce((s, m) => s + m.rainMm, 0);
   const meanTempC = Math.round(mean(monthly.map((m) => m.tMeanC)) * 10) / 10;
+
+  // Hargreaves-Samani / radiation-adjusted reference evapotranspiration (ET0)
+  // NASA POWER ALLSKY_SFC_SW_DWN is MJ/m²/day in climatology (typically 8..28); convert if kWh
+  const monthlyEt0Mm = monthly.map((m, i) => {
+    const tRange = Math.max(2, m.tMaxC - m.tMinC);
+    const rawSolar = m.solarKwh ?? 17;
+    const rsMj = rawSolar <= 9 ? rawSolar * 3.6 : rawSolar;
+    const et0Day = clamp(
+      0.0085 * Math.max(4, m.tMeanC + 17.8) * (rsMj / 2.45) * clamp(Math.sqrt(tRange / 11), 0.78, 1.22),
+      0.9,
+      8.5
+    );
+    return Math.round(et0Day * DAYS_IN_MONTH[i]);
+  });
+  const annualEt0Mm = monthlyEt0Mm.reduce((a, b) => a + b, 0);
 
   // Dry month: little rain AND warm enough that crops are actively drinking
   const dryMonths = monthly
@@ -130,6 +149,7 @@ export function buildClimateProfile(
     location: { lat, lng },
     zoneLabel,
     annualRainMm,
+    annualEt0Mm,
     meanTempC,
     monthly,
     dryMonths,
