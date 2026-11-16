@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Contrast,
+  Globe2,
   Lock,
   Mic,
   MicOff,
@@ -14,6 +15,12 @@ import {
   VolumeX,
 } from "lucide-react";
 import { startVoiceListening, type FontScale } from "@/lib/speech";
+import {
+  getTranslations,
+  LANGUAGE_LIST,
+  LANGUAGES,
+  type AppLanguage,
+} from "@/lib/i18n";
 
 export interface FarmerSession {
   name: string;
@@ -30,6 +37,9 @@ interface LoginPortalProps {
   onToggleHighContrast: () => void;
   autoSpeak: boolean;
   onToggleAutoSpeak: () => void;
+  lang: AppLanguage;
+  onChangeLang: (lang: AppLanguage) => void;
+  onOpenVoiceStudio: () => void;
 }
 
 const STAR_FIELD = [
@@ -68,7 +78,11 @@ export default function LoginPortal({
   onToggleHighContrast,
   autoSpeak,
   onToggleAutoSpeak,
+  lang,
+  onChangeLang,
+  onOpenVoiceStudio,
 }: LoginPortalProps) {
+  const t = getTranslations(lang);
   const [menuOpen, setMenuOpen] = useState(false);
   const [farmerInput, setFarmerInput] = useState("");
   const [farmPin, setFarmPin] = useState("");
@@ -137,7 +151,7 @@ export default function LoginPortal({
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (farmPin.length > 0 && farmPin.length < 4) {
-      setPinError("Farm PIN must be 4 digits (or leave blank).");
+      setPinError(t.pinError);
       return;
     }
     setPinError(null);
@@ -461,8 +475,8 @@ export default function LoginPortal({
           </svg>
         </div>
 
-        {/* Top Bar Inside Portal Card: Top-Left Sign In Badge & Top-Right Menu */}
-        <div className="relative z-20 flex items-center justify-between gap-3">
+        {/* Top Bar Inside Portal Card: Top-Left Sign In Badge & Top-Right Language/Voice/Menu */}
+        <div className="relative z-20 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5 flex-wrap">
             <button
               data-testid="login-mode-toggle"
@@ -472,24 +486,60 @@ export default function LoginPortal({
               className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-[#6EE7B7]/45 bg-[#0A231C]/75 hover:bg-[#123A2E]/85 text-[#ECFEFF] text-xs sm:text-sm font-semibold shadow-[0_0_24px_rgba(110,231,183,0.22)] backdrop-blur-md transition disabled:opacity-50"
             >
               <User className="w-3.5 h-3.5 text-[#6EE7B7]" />
-              <span>Sign In &bull; Farmer Portal</span>
+              <span>{t.signInPortal}</span>
             </button>
 
             <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#092019]/75 border border-[#6EE7B7]/20 text-[10px] font-bold uppercase tracking-[0.16em] text-[#8EC9B5] backdrop-blur-md">
               <Satellite className="w-3 h-3 text-amber-300" />
-              Orbit: 705 km Sun-Sync
+              {t.orbitBadge}
             </span>
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div
+              role="group"
+              aria-label="Language"
+              className="hidden sm:inline-flex items-center gap-0.5 p-1 rounded-xl border border-[#6EE7B7]/25 bg-[#0A231C]/70 backdrop-blur-md"
+            >
+              {LANGUAGE_LIST.map((item) => (
+                <button
+                  key={item.id}
+                  data-testid={`login-quick-lang-${item.id}`}
+                  type="button"
+                  disabled={isLaunching}
+                  onClick={() => onChangeLang(item.id)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-extrabold transition ${
+                    lang === item.id
+                      ? "bg-[#6EE7B7] text-[#051B14]"
+                      : "text-[#B6EFE0] hover:bg-[#123A2E]"
+                  }`}
+                >
+                  {item.shortBadge}
+                </button>
+              ))}
+            </div>
+
             <button
+              data-testid="login-open-voice-studio-btn"
               type="button"
               disabled={isLaunching}
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-label="Open display and voice menu"
-              aria-expanded={menuOpen}
-              className="p-2.5 rounded-xl border border-[#6EE7B7]/25 bg-[#0A231C]/65 hover:bg-[#123A2E]/85 text-[#ECFEFF] transition backdrop-blur-md disabled:opacity-50"
+              onClick={onOpenVoiceStudio}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-amber-300/45 bg-amber-300/15 hover:bg-amber-300/25 text-amber-100 text-xs font-bold backdrop-blur-md transition disabled:opacity-50"
             >
+              <Globe2 className="w-3.5 h-3.5 text-[#6EE7B7]" />
+              <span>{LANGUAGES[lang].shortBadge}</span>
+              <span className="hidden md:inline">&bull; {t.langStudioBtn}</span>
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                disabled={isLaunching}
+                onClick={() => setMenuOpen((o) => !o)}
+                aria-label="Open display and voice menu"
+                aria-expanded={menuOpen}
+                className="p-2.5 rounded-xl border border-[#6EE7B7]/25 bg-[#0A231C]/65 hover:bg-[#123A2E]/85 text-[#ECFEFF] transition backdrop-blur-md disabled:opacity-50"
+              >
               {/* Staggered 3-line icon matching reference design */}
               <span className="flex flex-col items-end gap-1.5 w-6">
                 <span className="w-6 h-0.5 rounded-full bg-current" />
@@ -558,6 +608,7 @@ export default function LoginPortal({
                 </button>
               </div>
             )}
+            </div>
           </div>
         </div>
 
@@ -626,7 +677,7 @@ export default function LoginPortal({
 
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#0D2720]/85 border border-[#6EE7B7]/35 text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] text-[#6EE7B7]">
               <span className="w-1.5 h-1.5 rounded-full bg-[#4ADE80] animate-pulse" />
-              Satellite Crop Rotation &amp; Soil Resilience Mission
+              {t.missionSubtitle}
             </div>
           </div>
 
@@ -635,7 +686,7 @@ export default function LoginPortal({
             <div className="w-full max-w-md rounded-2xl bg-[#0A221B]/92 border border-[#6EE7B7]/45 p-5 shadow-2xl space-y-3 backdrop-blur-xl">
               <div className="flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#6EE7B7]">
                 <Rocket className="w-4 h-4 text-amber-300 animate-bounce" />
-                Locking NASA Satellite Telemetry...
+                {t.launchingText}
               </div>
               <p className="text-sm font-semibold text-[#F7FAF6]">
                 Welcome, {pendingSession?.name ?? "Farmer"} — entering 3D Earth
@@ -650,11 +701,11 @@ export default function LoginPortal({
           ) : (
             <form
               onSubmit={handleFormSubmit}
-              className="w-full max-w-md rounded-2xl border border-[#6EE7B7]/40 bg-[#082019]/88 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.65)] backdrop-blur-xl space-y-3.5 text-left"
+              className="w-full max-w-md rounded-2xl border border-[#6EE7B7]/40 bg-[#082019]/88 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.65)] backdrop-blur-xl space-y-3.5 text-start"
             >
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-[#6EE7B7] mb-1">
-                  Farmer Name or Plot ID
+                  {t.farmerNameLabel}
                 </label>
                 <div className="relative flex items-center">
                   <User className="w-4 h-4 text-[#8FB4A6] absolute left-3 pointer-events-none" />
@@ -664,7 +715,7 @@ export default function LoginPortal({
                     type="text"
                     value={farmerInput}
                     onChange={(e) => setFarmerInput(e.target.value)}
-                    placeholder="e.g. Ahmed AboAsal or Nile Farm 01"
+                    placeholder={t.farmerNamePlaceholder}
                     className="w-full pl-9 pr-11 py-2.5 rounded-xl bg-[#0F2B22] border border-[#6EE7B7]/30 text-sm text-[#F7FAF6] placeholder:text-[#7DA192] focus:outline-none focus:ring-2 focus:ring-[#6EE7B7]/50"
                   />
                   <button
@@ -694,7 +745,7 @@ export default function LoginPortal({
 
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-[#6EE7B7] mb-1">
-                  Farm PIN / Passcode (Optional)
+                  {t.farmPinLabel}
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-[#8FB4A6] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -710,7 +761,7 @@ export default function LoginPortal({
                       setFarmPin(digitsOnly);
                       if (pinError) setPinError(null);
                     }}
-                    placeholder="Enter 4-digit PIN or leave blank"
+                    placeholder={t.farmPinPlaceholder}
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#0F2B22] border border-[#6EE7B7]/30 text-sm text-[#F7FAF6] placeholder:text-[#7DA192] focus:outline-none focus:ring-2 focus:ring-[#6EE7B7]/50"
                   />
                 </div>
@@ -730,7 +781,7 @@ export default function LoginPortal({
                 className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#4ADE80] hover:bg-amber-300 text-[#07150F] text-sm font-extrabold shadow-lg transition"
               >
                 <Rocket className="w-4 h-4" />
-                Sign In to Satellite Dashboard
+                {t.signInBtn}
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
@@ -744,7 +795,7 @@ export default function LoginPortal({
               onClick={handleGuestEnter}
               className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-[#6EE7B7]/35 bg-[#0B241D]/80 hover:bg-[#153B30] hover:border-amber-300/60 text-xs sm:text-sm font-bold text-[#9CE3CA] hover:text-amber-200 transition backdrop-blur-md shadow-md"
             >
-              <span>Enter as Guest Farmer</span>
+              <span>{t.guestBtn}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}

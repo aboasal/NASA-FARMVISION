@@ -30,6 +30,14 @@ import CloudTransitionOverlay, {
 import FarmPlannerPage from "@/components/FarmPlannerPage";
 import LoginPortal, { type FarmerSession } from "@/components/LoginPortal";
 import TutorialOverlay from "@/components/TutorialOverlay";
+import VoiceLanguageStudioModal from "@/components/VoiceLanguageStudioModal";
+import {
+  LANGUAGES,
+  getTranslations,
+  getVoicePrompts,
+  getWelcomeVoicePrompt,
+  type AppLanguage,
+} from "@/lib/i18n";
 import type { FlyToTarget } from "@/components/FarmMap";
 import type { GlobePovTarget } from "@/components/Globe3D";
 import {
@@ -45,11 +53,14 @@ import {
 } from "@/lib/nasa";
 import {
   WELCOME_VOICE_PROMPT,
+  getVoiceSettings,
+  setVoiceSettings,
   speakText,
   startVoiceListening,
   stopSpeaking,
   type AreaUnit,
   type FontScale,
+  type VoiceHelperSettings,
 } from "@/lib/speech";
 import type {
   BaseMapId,
@@ -187,22 +198,62 @@ export default function AgriDashboard() {
   const [isVoiceSearching, setIsVoiceSearching] = useState(false);
   const stopVoiceSearchRef = useRef<(() => void) | null>(null);
 
-  // Accessibility, Voice Guide & Land Unit QoL state
+  // Accessibility, Multi-Language & Voice Helper Studio state
   const [fontScale, setFontScale] = useState<FontScale>("normal");
   const [highContrast, setHighContrast] = useState<boolean>(false);
   const [autoSpeak, setAutoSpeak] = useState<boolean>(false);
   const [areaUnit, setAreaUnit] = useState<AreaUnit>("ha");
+  const [voiceSettings, setVoiceSettingsState] = useState<VoiceHelperSettings>(
+    () => getVoiceSettings()
+  );
+  const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState<boolean>(false);
   const [voicePromptVisible, setVoicePromptVisible] = useState<boolean>(false);
   const [voiceBeaconPulse, setVoiceBeaconPulse] = useState<boolean>(true);
   const didSpeakStartRef = useRef<boolean>(false);
   const isLoginOpenRef = useRef<boolean>(true);
   const isWelcomeOpenRef = useRef<boolean>(true);
+
+  const lang: AppLanguage = voiceSettings.lang;
+  const t = useMemo(() => getTranslations(lang), [lang]);
+
+  const handleUpdateVoiceSettings = useCallback(
+    (next: Partial<VoiceHelperSettings>) => {
+      const updated = setVoiceSettings(next);
+      setVoiceSettingsState(updated);
+      try {
+        localStorage.setItem("farmvision:voiceSettings", JSON.stringify(updated));
+        localStorage.setItem("farmvision:lang", updated.lang);
+      } catch {
+        // Ignore storage errors
+      }
+    },
+    []
+  );
+
+  const handleChangeLang = useCallback(
+    (nextLang: AppLanguage) => {
+      didSpeakStartRef.current = true;
+      handleUpdateVoiceSettings({ lang: nextLang, voiceURI: "" });
+      const introMsg =
+        isLoginOpenRef.current || isWelcomeOpenRef.current
+          ? getWelcomeVoicePrompt(nextLang)
+          : getVoicePrompts(nextLang).voiceHelperMap;
+      speakText(introMsg, { lang: nextLang });
+    },
+    [handleUpdateVoiceSettings]
+  );
+
   useEffect(() => {
     isLoginOpenRef.current = isLoginOpen;
   }, [isLoginOpen]);
   useEffect(() => {
     isWelcomeOpenRef.current = isWelcomeOpen;
   }, [isWelcomeOpen]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = LANGUAGES[lang].dir;
+  }, [lang]);
 
   // Saved field history dropdown QoL
   const [savedHistoryOpen, setSavedHistoryOpen] = useState(false);
@@ -238,7 +289,9 @@ export default function AgriDashboard() {
     const timer = window.setTimeout(() => {
       setVoicePromptVisible(true);
       setVoiceBeaconPulse(true);
-      speakText(WELCOME_VOICE_PROMPT, {
+      const welcomePrompt =
+        getWelcomeVoicePrompt(getVoiceSettings().lang) || WELCOME_VOICE_PROMPT;
+      speakText(welcomePrompt, {
         onStart: () => {
           didSpeakStartRef.current = true;
         },
@@ -250,13 +303,13 @@ export default function AgriDashboard() {
         const target = ev.target as HTMLElement | null;
         if (
           target?.closest(
-            '[data-tour="voice-helper-btn"], [data-testid="voice-welcome-banner"]'
+            '[data-tour="voice-helper-btn"], [data-testid="voice-welcome-banner"], [data-testid^="login-quick-lang-"], [data-testid^="lang-option-"], [data-testid="login-open-voice-studio-btn"], [data-testid="open-voice-studio-btn"], [data-testid="planner-open-voice-studio-btn"]'
           )
         ) {
           return;
         }
         if (!didSpeakStartRef.current) {
-          speakText(WELCOME_VOICE_PROMPT, {
+          speakText(getWelcomeVoicePrompt(getVoiceSettings().lang), {
             onStart: () => {
               didSpeakStartRef.current = true;
             },
@@ -280,12 +333,14 @@ export default function AgriDashboard() {
     setAutoSpeak(true);
     setVoicePromptVisible(false);
     setVoiceBeaconPulse(false);
+    const activeLang = getVoiceSettings().lang;
+    const vp = getVoicePrompts(activeLang);
     const message = isLoginOpenRef.current
-      ? "Voice helper is now on. Tap the green Sign In button in the middle of the screen, or tap Enter as Guest Farmer below it to launch the 3D Earth."
+      ? vp.voiceHelperLogin
       : isWelcomeOpenRef.current
-        ? "Voice helper is now on. Tap View 3D Earth in the center of your screen, or tap Next on the tour card to begin."
-        : "Voice helper is now on. Use the search bar, blue microphone, or green GPS target at the top to find your farm, then tap Mark My Field.";
-    speakText(message);
+        ? vp.voiceHelperWelcome
+        : vp.voiceHelperMap;
+    speakText(message, { lang: activeLang });
   }, []);
 
   // Hydrate saved accessibility preferences & backend field history
@@ -304,6 +359,20 @@ export default function AgriDashboard() {
       const sUnit = localStorage.getItem("farmvision:areaUnit") as AreaUnit | null;
       if (sUnit === "ha" || sUnit === "acres" || sUnit === "feddan") {
         setAreaUnit(sUnit);
+      }
+      const savedVoiceRaw = localStorage.getItem("farmvision:voiceSettings");
+      if (savedVoiceRaw) {
+        const parsed = JSON.parse(savedVoiceRaw) as Partial<VoiceHelperSettings>;
+        if (parsed.lang && LANGUAGES[parsed.lang]) {
+          const synced = setVoiceSettings(parsed);
+          setVoiceSettingsState(synced);
+        }
+      } else {
+        const savedLang = localStorage.getItem("farmvision:lang") as AppLanguage | null;
+        if (savedLang && LANGUAGES[savedLang]) {
+          const synced = setVoiceSettings({ lang: savedLang });
+          setVoiceSettingsState(synced);
+        }
       }
     } catch {
       // Ignore storage errors
@@ -426,9 +495,10 @@ export default function AgriDashboard() {
       setTransitionFieldName(targetField.name);
 
       if (autoSpeak) {
-        speakText(
-          `Field ${targetField.name} marked. Flying through the clouds to your farm planner.`
-        );
+        const activeLang = getVoiceSettings().lang;
+        speakText(getVoicePrompts(activeLang).fieldMarked(targetField.name), {
+          lang: activeLang,
+        });
       }
 
       const prefersReducedMotion =
@@ -906,7 +976,7 @@ export default function AgriDashboard() {
               className="ml-0.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#6EE7B7]/25 bg-[#152E24] hover:bg-[#1C3D30] text-[#F7FAF6] text-xs font-medium transition"
             >
               <Home className="w-3.5 h-3.5 text-[#6EE7B7]" />
-              <span className="hidden 2xl:inline">Home</span>
+              <span className="hidden 2xl:inline">{t.home}</span>
             </button>
             <button
               type="button"
@@ -915,21 +985,13 @@ export default function AgriDashboard() {
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#6EE7B7]/45 bg-[#6EE7B7]/15 hover:bg-[#6EE7B7]/25 text-[#6EE7B7] text-xs font-semibold transition"
             >
               <HelpCircle className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Tour</span>
+              <span className="hidden sm:inline">{t.tour}</span>
             </button>
             {!isLoginOpen && !isWelcomeOpen && (
               <button
                 data-tour="voice-helper-btn"
                 type="button"
-                onClick={() => {
-                  if (autoSpeak) {
-                    stopSpeaking();
-                    setAutoSpeak(false);
-                    setVoiceBeaconPulse(false);
-                  } else {
-                    handleActivateVoiceHelper();
-                  }
-                }}
+                onClick={handleActivateVoiceHelper}
                 title="Voice Helper — Listen to spoken guidance anytime"
                 aria-pressed={autoSpeak}
                 className={`relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-extrabold transition shadow-md ${
@@ -946,7 +1008,7 @@ export default function AgriDashboard() {
                   <VolumeX className="w-3.5 h-3.5 shrink-0" />
                 )}
                 <span className="hidden xl:inline">
-                  {autoSpeak ? "Voice ON" : "Voice"}
+                  {autoSpeak ? t.voiceOn : t.voice}
                 </span>
                 {voiceBeaconPulse && !autoSpeak && (
                   <span
@@ -968,6 +1030,16 @@ export default function AgriDashboard() {
             >
               {fontScale === "normal" ? "A" : fontScale === "large" ? "A+" : "A++"}
             </button>
+            <button
+              data-testid="open-voice-studio-btn"
+              type="button"
+              onClick={() => setIsVoiceStudioOpen(true)}
+              title={t.langStudioBtn}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-amber-300/45 bg-amber-300/15 hover:bg-amber-300/25 text-xs font-bold text-amber-100 transition"
+            >
+              <Globe2 className="w-3.5 h-3.5 text-[#6EE7B7]" />
+              <span>{LANGUAGES[lang].shortBadge}</span>
+            </button>
           </div>
 
           {/* Center-Left: 3-Step Workflow Progress Indicator (Tablet & Desktop) */}
@@ -983,7 +1055,7 @@ export default function AgriDashboard() {
                   : "text-[#B8D3C5]"
               }`}
             >
-              1. Mark
+              {t.step1Mark}
             </span>
             <span className="text-[#6EE7B7]/35">&rsaquo;</span>
             <button
@@ -999,7 +1071,7 @@ export default function AgriDashboard() {
                   : "text-[#B8D3C5] hover:text-[#F7FAF6]"
               }`}
             >
-              2. Inputs
+              {t.step2Inputs}
             </button>
             <span className="text-[#6EE7B7]/35">&rsaquo;</span>
             <button
@@ -1015,7 +1087,7 @@ export default function AgriDashboard() {
                   : "text-[#B8D3C5] hover:text-[#F7FAF6]"
               }`}
             >
-              3. Plan
+              {t.step3Plan}
             </button>
           </nav>
 
@@ -1031,7 +1103,7 @@ export default function AgriDashboard() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search village, region, or farm..."
+                placeholder={t.searchPlaceholder}
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-[#152E24] border border-[#6EE7B7]/25 text-[#F7FAF6] placeholder:text-[#86A897] rounded-full focus:bg-[#1A382C] focus:outline-none focus:ring-2 focus:ring-[#6EE7B7]/45 transition"
               />
             </div>
@@ -1040,7 +1112,7 @@ export default function AgriDashboard() {
               disabled={isSearching}
               className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-[#1B3A2E] hover:bg-[#244B3C] border border-[#6EE7B7]/25 text-[#F7FAF6] rounded-full transition disabled:opacity-50"
             >
-              {isSearching ? "..." : "Go"}
+              {isSearching ? "..." : t.go}
             </button>
             <button
               type="button"
@@ -1140,12 +1212,12 @@ export default function AgriDashboard() {
               {isDrawing ? (
                 <>
                   <Crosshair className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Drawing Active</span>
+                  <span className="hidden sm:inline">{t.drawingActive}</span>
                 </>
               ) : (
                 <>
                   <PenTool className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Mark My Field</span>
+                  <span className="hidden sm:inline">{t.markMyField}</span>
                 </>
               )}
             </button>
@@ -1226,7 +1298,7 @@ export default function AgriDashboard() {
             }`}
           >
             <Globe2 className="w-3.5 h-3.5" />
-            3D Earth
+            {t.earth3d}
           </button>
           <button
             type="button"
@@ -1239,7 +1311,7 @@ export default function AgriDashboard() {
             }`}
           >
             <MapIcon className="w-3.5 h-3.5" />
-            2D Map
+            {t.map2d}
           </button>
         </div>
 
@@ -1248,11 +1320,11 @@ export default function AgriDashboard() {
           <div className="absolute bottom-4 left-4 z-[450] w-[calc(100%-2rem)] max-w-lg px-4 py-3 rounded-2xl bg-[#10241C]/94 backdrop-blur-xl border border-[#6EE7B7]/30 shadow-2xl flex flex-wrap items-center justify-between gap-2.5">
             <div className="min-w-[180px] flex-1">
               <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#6EE7B7]">
-                Step 1 of 3 &bull; Find &amp; Mark Your Land
+                {t.step1BannerTitle}
               </div>
               <p className="text-xs text-[#D4E6DC] mt-0.5">
                 {viewMode === "globe"
-                  ? "Find your region by search, GPS, or globe—then mark your field."
+                  ? t.step1BannerDesc
                   : "Pan to your land parcel, then tap Mark My Field."}
               </p>
             </div>
@@ -1263,7 +1335,7 @@ export default function AgriDashboard() {
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-xs font-semibold text-[#D4E6DC] transition"
               >
                 <Sparkles className="w-3.5 h-3.5 text-[#6EE7B7]" />
-                Demo Field
+                {t.demoField}
               </button>
               <button
                 type="button"
@@ -1271,7 +1343,7 @@ export default function AgriDashboard() {
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#4ADE80] hover:bg-amber-300 text-[#07150F] text-xs font-bold transition"
               >
                 <PenTool className="w-3.5 h-3.5" />
-                Mark My Field
+                {t.markMyField}
               </button>
             </div>
           </div>
@@ -1441,6 +1513,7 @@ export default function AgriDashboard() {
         <TutorialOverlay
           isOpen={isTutorialOpen}
           onToggle={setIsTutorialOpen}
+          lang={lang}
           isWelcomeOpen={isWelcomeOpen}
           hasUsedLocationTool={hasUsedLocationTool}
           hasSwitchedView={hasSwitchedView}
@@ -1462,6 +1535,9 @@ export default function AgriDashboard() {
       {/* Futuristic Cosmic NASA Login Portal at the Start of the Website */}
       {!isPlannerPageActive && isLoginOpen && (
         <LoginPortal
+          lang={lang}
+          onChangeLang={handleChangeLang}
+          onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
           onStartLaunch={handleStartLoginLaunch}
           onCompleteLogin={handleCompleteLogin}
           fontScale={fontScale}
@@ -1469,7 +1545,14 @@ export default function AgriDashboard() {
           highContrast={highContrast}
           onToggleHighContrast={() => setHighContrast((v) => !v)}
           autoSpeak={autoSpeak}
-          onToggleAutoSpeak={() => setAutoSpeak((v) => !v)}
+          onToggleAutoSpeak={() => {
+            if (!autoSpeak) {
+              handleActivateVoiceHelper();
+            } else {
+              stopSpeaking();
+              setAutoSpeak(false);
+            }
+          }}
         />
       )}
 
@@ -1494,7 +1577,7 @@ export default function AgriDashboard() {
               />
             )}
           </span>
-          <span>Voice Helper</span>
+          <span>{t.voiceHelperBtn}</span>
         </button>
       )}
 
@@ -1514,10 +1597,10 @@ export default function AgriDashboard() {
               </div>
               <div className="space-y-0.5">
                 <div className="text-xs font-extrabold uppercase tracking-wider text-amber-300">
-                  Voice Guide Available
+                  {t.voiceBannerTitle}
                 </div>
                 <p className="text-xs text-[#E6F1EC] leading-snug">
-                  Hard to read? Tap the glowing yellow <strong>Speaker Icon</strong> anytime and I will guide you with my voice.
+                  {t.voiceBannerDesc}
                 </p>
               </div>
             </div>
@@ -1536,7 +1619,7 @@ export default function AgriDashboard() {
             className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#08150F] text-xs font-extrabold shadow-sm transition"
           >
             <Volume2 className="w-4 h-4" />
-            Tap Here for Voice Help
+            {t.voiceBannerCta}
           </button>
         </aside>
       )}
@@ -1570,11 +1653,8 @@ export default function AgriDashboard() {
           </h1>
 
           <p className="text-sm sm:text-base md:text-lg text-[#C2D9CD] max-w-xl leading-relaxed drop-shadow">
-            Welcome to{" "}
             <span className="text-[#F7FAF6] font-semibold">NASA &times; FARMVISION</span>{" "}
-            — mark your farm boundary on the 3D Earth, enter your water supply
-            &amp; last crop, and get personalized NASA-backed crop rotation
-            plans.
+            &mdash; {t.welcomeSub}
           </p>
 
           <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
@@ -1585,7 +1665,7 @@ export default function AgriDashboard() {
               className="group inline-flex items-center gap-2.5 px-7 py-3.5 rounded-full bg-[#F7FAF6] hover:bg-[#4ADE80] text-[#08150F] text-xs sm:text-sm font-bold uppercase tracking-[0.14em] shadow-2xl transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[#6EE7B7]/60"
             >
               <Globe2 className="w-4 h-4" />
-              View 3D Earth
+              {t.view3dEarthBtn}
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </button>
           </div>
@@ -1621,9 +1701,18 @@ export default function AgriDashboard() {
           highContrast={highContrast}
           onToggleHighContrast={() => setHighContrast((v) => !v)}
           autoSpeak={autoSpeak}
-          onToggleAutoSpeak={() => setAutoSpeak((v) => !v)}
+          onToggleAutoSpeak={() => {
+            if (!autoSpeak) {
+              handleActivateVoiceHelper();
+            } else {
+              stopSpeaking();
+              setAutoSpeak(false);
+            }
+          }}
           areaUnit={areaUnit}
           onChangeAreaUnit={setAreaUnit}
+          lang={lang}
+          onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
         />
       )}
 
@@ -1632,6 +1721,14 @@ export default function AgriDashboard() {
         phase={transitionPhase}
         fieldName={transitionFieldName}
         direction={transitionDirection}
+      />
+
+      {/* Voice & Language Studio Modal */}
+      <VoiceLanguageStudioModal
+        isOpen={isVoiceStudioOpen}
+        onClose={() => setIsVoiceStudioOpen(false)}
+        voiceSettings={voiceSettings}
+        onUpdateSettings={handleUpdateVoiceSettings}
       />
     </>
   );

@@ -58,6 +58,12 @@ import type {
   RiskLevel,
   WaterSupplyTier,
 } from "@/types/farm";
+import {
+  getTranslations,
+  getVoicePrompts,
+  translateCropName,
+  type AppLanguage,
+} from "@/lib/i18n";
 
 type WeatherScenario = "normal" | "dry" | "wet";
 
@@ -72,6 +78,8 @@ interface FarmPlannerPageProps {
   onReturnToMap: () => void;
   onRedrawField: () => void;
   onExportGeoJSON: () => void;
+  lang?: AppLanguage;
+  onOpenVoiceStudio?: () => void;
   nasaData: NasaPowerResponse | null;
   isLoadingNasa: boolean;
   fontScale: FontScale;
@@ -276,7 +284,11 @@ export default function FarmPlannerPage({
   onToggleAutoSpeak,
   areaUnit,
   onChangeAreaUnit,
+  lang = "en",
+  onOpenVoiceStudio,
 }: FarmPlannerPageProps) {
+  const t = getTranslations(lang);
+  const vp = getVoicePrompts(lang);
   const [backendClimate, setBackendClimate] = useState<ClimateProfile | null>(null);
   const [backendPlans, setBackendPlans] = useState<CropCyclePlan[] | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
@@ -292,7 +304,9 @@ export default function FarmPlannerPage({
   const stopListeningRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    setTtsAvailable(isSpeechSynthesisSupported());
+    setTtsAvailable(
+      isSpeechSynthesisSupported() || typeof Audio !== "undefined"
+    );
     return () => {
       stopSpeaking();
       stopListeningRef.current?.();
@@ -470,7 +484,11 @@ export default function FarmPlannerPage({
   }, [inputs.waterM3PerHa, scenario, topPlan]);
 
   const speakHelper = (text: string) => {
-    if (!ttsAvailable && !isSpeechSynthesisSupported()) {
+    if (
+      !ttsAvailable &&
+      !isSpeechSynthesisSupported() &&
+      typeof Audio === "undefined"
+    ) {
       setVoiceFeedback(
         "Audio playback is unavailable in this browser window, but all large visual icons and text remain active."
       );
@@ -478,7 +496,7 @@ export default function FarmPlannerPage({
     }
     setIsSpeaking(true);
     speakText(text, {
-      rate: fontScale === "xlarge" ? 0.88 : 0.94,
+      lang,
       onEnd: () => setIsSpeaking(false),
     });
   };
@@ -491,26 +509,25 @@ export default function FarmPlannerPage({
     }
 
     if (step === "inputs") {
-      const msg =
-        `You are setting up ${field.name}, measuring ${areaDisplay.value} ${areaDisplay.unitLabel}. ` +
-        `Question 1: Your water supply is set to ${WATER_TIER_PRESETS[inputs.waterTier].label}, about ${inputs.waterM3PerHa} cubic meters per hectare. ` +
-        `Question 2: Your last crop was ${PREVIOUS_CROP_INFO[inputs.lastCrop].label}. ` +
-        `Question 3: Your main goal is ${
-          PRIORITY_OPTIONS.find((p) => p.id === inputs.priority)?.title ??
-          inputs.priority
-        }. ` +
-        `Tap Predict My Crop Rotation when you are ready.`;
+      const msg = vp.readInputsPage(
+        field.name,
+        String(areaDisplay.value),
+        areaDisplay.unitLabel,
+        inputs.waterM3PerHa,
+        translateCropName(inputs.lastCrop, lang)
+      );
       speakHelper(msg);
     } else if (topPlan && prediction) {
-      const climatePart = backendClimate
-        ? `NASA satellites show a ${backendClimate.zoneLabel} climate with ${backendClimate.annualRainMm} millimeters of rain per year. `
-        : "";
-      const msg =
-        `${climatePart}Top recommended rotation is ${topPlan.name}. ` +
-        `First plant ${topPlan.stages[0].crop}, then ${topPlan.stages[1].crop}, then ${topPlan.stages[2].crop}. ` +
-        `Under the ${scenario} weather scenario, harvest reliability is ${prediction.harvestReliability} percent, ` +
-        `soil health rises from ${prediction.soilYear1} percent to ${prediction.soilYear3} percent by year three, ` +
-        `and predicted yearly income is about ${prediction.yearlyIncomeUsd.toLocaleString()} dollars.`;
+      const msg = vp.readPlansPage(
+        topPlan.name,
+        translateCropName(topPlan.stages[0].crop, lang),
+        translateCropName(topPlan.stages[1].crop, lang),
+        translateCropName(topPlan.stages[2].crop, lang),
+        prediction.harvestReliability,
+        prediction.soilYear1,
+        prediction.soilYear3,
+        prediction.yearlyIncomeUsd
+      );
       speakHelper(msg);
     }
   };
@@ -581,7 +598,9 @@ export default function FarmPlannerPage({
 
     const feedback = `NASA set your water estimate to ${WATER_TIER_PRESETS[tier].label} based on local soil moisture and rainfall.`;
     setVoiceFeedback(feedback);
-    if (autoSpeak) speakHelper(feedback);
+    if (autoSpeak) {
+      speakHelper(vp.autoFillSpeech(WATER_TIER_PRESETS[tier].defaultM3PerHa));
+    }
   };
 
   const handleSelectWaterTier = (tier: WaterSupplyTier) => {
@@ -592,24 +611,23 @@ export default function FarmPlannerPage({
     };
     onChangeInputs(next);
     if (autoSpeak) {
-      speakHelper(`${WATER_TIER_PRESETS[tier].label}. ${WATER_TIER_PRESETS[tier].desc}`);
+      speakHelper(
+        vp.waterTierSpeech(tier, WATER_TIER_PRESETS[tier].defaultM3PerHa)
+      );
     }
   };
 
   const handleSelectCrop = (crop: PreviousCropType) => {
     onChangeInputs({ ...inputs, lastCrop: crop });
     if (autoSpeak) {
-      speakHelper(
-        `Last crop ${PREVIOUS_CROP_INFO[crop].label}. ${PREVIOUS_CROP_INFO[crop].soilEffect}`
-      );
+      speakHelper(vp.lastCropSpeech(translateCropName(crop, lang)));
     }
   };
 
   const handleSelectPriority = (priority: PlanPriority) => {
     onChangeInputs({ ...inputs, priority });
     if (autoSpeak) {
-      const opt = PRIORITY_OPTIONS.find((p) => p.id === priority);
-      if (opt) speakHelper(`${opt.title}. ${opt.subtitle}`);
+      speakHelper(vp.prioritySpeech(priority));
     }
   };
 
@@ -630,7 +648,7 @@ export default function FarmPlannerPage({
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#152E24] hover:bg-[#1C3D30] border border-[#6EE7B7]/25 text-sm sm:text-base font-bold text-[#F7FAF6] transition"
             >
               <Globe2 className="w-5 h-5 text-[#6EE7B7]" />
-              <span>&larr; 3D Earth &amp; Map</span>
+              <span>&larr; {t.backToMap}</span>
             </button>
 
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#152E24] border border-[#6EE7B7]/35 text-sm font-semibold text-[#6EE7B7]">
@@ -691,6 +709,17 @@ export default function FarmPlannerPage({
               <span className="hidden sm:inline">Contrast</span>
             </button>
 
+            {/* Voice & Language Studio Modal Trigger */}
+            <button
+              data-testid="planner-open-voice-studio-btn"
+              type="button"
+              onClick={() => onOpenVoiceStudio?.()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-amber-300/45 bg-amber-300/15 hover:bg-amber-300/25 text-sm font-bold text-amber-100 transition"
+            >
+              <Globe2 className="w-4 h-4 text-[#6EE7B7]" />
+              <span>{t.langStudioBtn}</span>
+            </button>
+
             {/* Voice Guide Auto-Speak Toggle */}
             {ttsSupported && (
               <button
@@ -725,7 +754,7 @@ export default function FarmPlannerPage({
                 }`}
               >
                 <Volume2 className="w-4 h-4" />
-                <span>{isSpeaking ? "Stop Voice" : "Listen to Page"}</span>
+                <span>{isSpeaking ? t.stopReading : t.listenToPage}</span>
               </button>
             )}
 
@@ -749,7 +778,7 @@ export default function FarmPlannerPage({
               ) : (
                 <Mic className="w-4 h-4" />
               )}
-              <span>{isListening ? "Listening..." : "Speak Answers"}</span>
+              <span>{isListening ? "Listening..." : t.speakAnswers}</span>
             </button>
           </div>
         </div>
@@ -781,7 +810,7 @@ export default function FarmPlannerPage({
         <section className="print-card rounded-3xl bg-[#10241C] border border-[#6EE7B7]/25 p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2 flex-1 min-w-[260px]">
             <div className="text-sm font-bold uppercase tracking-wider text-[#6EE7B7]">
-              Marked Farm Parcel &bull; {field.centroid[0].toFixed(3)}&deg;,{" "}
+              {t.markedFarmParcel} &bull; {field.centroid[0].toFixed(3)}&deg;,{" "}
               {field.centroid[1].toFixed(3)}&deg;
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -800,7 +829,7 @@ export default function FarmPlannerPage({
               )}
 
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#152E24] border border-[#6EE7B7]/35 text-base sm:text-lg font-extrabold text-[#F7FAF6]">
-                <span>Size:</span>
+                <span>{t.sizeLabel}</span>
                 <span className="text-[#6EE7B7]">
                   {areaDisplay.value} {areaDisplay.unitLabel}
                 </span>
@@ -874,11 +903,10 @@ export default function FarmPlannerPage({
             <div className="rounded-3xl bg-[#152E24] border border-[#6EE7B7]/35 p-5 flex flex-wrap items-center justify-between gap-4">
               <div className="space-y-1 max-w-2xl">
                 <h2 className="text-xl sm:text-2xl font-extrabold text-[#F7FAF6]">
-                  Tell Us 3 Simple Things About Your Farm
+                  {t.tellUs3Things}
                 </h2>
                 <p className="text-base sm:text-lg text-[#D4E6DC] leading-relaxed">
-                  Tap the big pictures below, tap <strong>Listen</strong> to hear options aloud, or tap{" "}
-                  <strong>Auto-Fill from NASA</strong> if you are unsure.
+                  {t.tellUs3Sub}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2.5">
@@ -888,7 +916,7 @@ export default function FarmPlannerPage({
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#6EE7B7]/15 hover:bg-[#6EE7B7]/25 border border-[#6EE7B7]/50 text-base font-bold text-[#6EE7B7] transition"
                 >
                   <Sparkles className="w-5 h-5" />
-                  Auto-Fill Water from NASA
+                  {t.autoFillNasa}
                 </button>
               </div>
             </div>
@@ -900,16 +928,12 @@ export default function FarmPlannerPage({
                   <div className="flex flex-wrap items-center gap-3">
                     <h3 className="text-xl sm:text-2xl font-extrabold text-[#F7FAF6] flex items-center gap-2.5">
                       <Droplets className="w-6 h-6 text-sky-400 shrink-0" />
-                      1. How much water does this field have?
+                      {t.q1WaterTitle}
                     </h3>
                     {ttsSupported && (
                       <button
                         type="button"
-                        onClick={() =>
-                          speakHelper(
-                            "Question 1. How much water does this field have? Choose Little Water for mostly rain, Medium Water for canal or well pump, or Plenty of Water for drip or river pump."
-                          )
-                        }
+                        onClick={() => speakHelper(vp.q1Listen)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-sm font-bold text-[#08150F]"
                       >
                         <Volume2 className="w-4 h-4" />
@@ -918,13 +942,13 @@ export default function FarmPlannerPage({
                     )}
                   </div>
                   <p className="text-base text-[#C2D9CD]">
-                    Pick the picture that best matches how you water crops.
+                    {t.q1WaterSub}
                   </p>
                 </div>
 
                 <div className="rounded-2xl bg-[#152E24] border border-[#6EE7B7]/25 px-4 py-2.5 text-right">
                   <div className="text-sm font-semibold text-[#C2D9CD]">
-                    Total Water on Your Land
+                    {t.totalWaterLabel}
                   </div>
                   <div className="text-xl sm:text-2xl font-extrabold text-[#6EE7B7]">
                     ~{totalWaterM3.toLocaleString()} m&sup3; / year
@@ -972,7 +996,12 @@ export default function FarmPlannerPage({
                           <button
                             type="button"
                             onClick={() =>
-                              speakHelper(`${preset.label}. ${preset.desc}`)
+                              speakHelper(
+                                vp.waterTierSpeech(
+                                  tierKey,
+                                  preset.defaultM3PerHa
+                                )
+                              )
                             }
                             className="self-start inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0C1B15] hover:bg-amber-400 hover:text-[#08150F] border border-[#6EE7B7]/25 text-sm font-bold text-[#6EE7B7] transition"
                           >
@@ -1054,16 +1083,12 @@ export default function FarmPlannerPage({
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-xl sm:text-2xl font-extrabold text-[#F7FAF6] flex items-center gap-2.5">
                     <Wheat className="w-6 h-6 text-[#6EE7B7] shrink-0" />
-                    2. What was the last crop planted here?
+                    {t.q2CropTitle}
                   </h3>
                   {ttsSupported && (
                     <button
                       type="button"
-                      onClick={() =>
-                        speakHelper(
-                          "Question 2. Tap the picture of the last crop you harvested from this field so we protect soil nutrients and stop repeating crop diseases."
-                        )
-                      }
+                      onClick={() => speakHelper(vp.q2Listen)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-sm font-bold text-[#08150F]"
                     >
                       <Volume2 className="w-4 h-4" />
@@ -1072,7 +1097,7 @@ export default function FarmPlannerPage({
                   )}
                 </div>
                 <p className="text-base text-[#C2D9CD]">
-                  Changing crop families naturally breaks pests and feeds tired soil.
+                  {t.q2CropSub}
                 </p>
               </div>
 
@@ -1114,7 +1139,9 @@ export default function FarmPlannerPage({
                     type="button"
                     onClick={() =>
                       speakHelper(
-                        `After ${inputs.lastCrop}: ${prevCropMeta.soilEffect}`
+                        vp.lastCropSpeech(
+                          translateCropName(inputs.lastCrop, lang)
+                        )
                       )
                     }
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-sm font-bold text-[#08150F]"
@@ -1132,16 +1159,12 @@ export default function FarmPlannerPage({
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-xl sm:text-2xl font-extrabold text-[#F7FAF6] flex items-center gap-2.5">
                     <ShieldCheck className="w-6 h-6 text-[#6EE7B7] shrink-0" />
-                    3. What matters most to you this year?
+                    {t.q3GoalTitle}
                   </h3>
                   {ttsSupported && (
                     <button
                       type="button"
-                      onClick={() =>
-                        speakHelper(
-                          "Question 3. Pick your main goal: More Money, Healthy Land for Years, or Save Water for dry weather."
-                        )
-                      }
+                      onClick={() => speakHelper(vp.q3Listen)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-sm font-bold text-[#08150F]"
                     >
                       <Volume2 className="w-4 h-4" />
@@ -1191,7 +1214,7 @@ export default function FarmPlannerPage({
                 className="inline-flex items-center gap-2 px-5 py-3.5 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-base font-bold text-[#E6F1EC] transition"
               >
                 <RotateCcw className="w-5 h-5" />
-                Redraw Land Boundary
+                {t.redrawBtn}
               </button>
 
               <button
@@ -1199,15 +1222,13 @@ export default function FarmPlannerPage({
                 onClick={() => {
                   onGeneratePlans();
                   if (autoSpeak && topPlan) {
-                    speakHelper(
-                      `Predicting your crop rotation now. Top plan is ${topPlan.name}.`
-                    );
+                    speakHelper(vp.predictingSpeech(topPlan.name));
                   }
                 }}
                 className="inline-flex items-center gap-3 px-8 py-4 rounded-full bg-[#4ADE80] hover:bg-amber-300 text-[#07150F] text-lg sm:text-xl font-extrabold shadow-2xl transition hover:scale-[1.02]"
               >
                 <Sparkles className="w-6 h-6" />
-                <span>Predict My Crop Rotation &amp; 3-Year Forecast</span>
+                <span>{t.predictBtn}</span>
                 <ArrowRight className="w-6 h-6" />
               </button>
             </div>
@@ -1252,7 +1273,7 @@ export default function FarmPlannerPage({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-extrabold uppercase tracking-wider text-[#6EE7B7]">
-                    Choose Any of Your {activePlans.length} Tailored Crop Plans to Predict
+                    {t.choose4Plans}
                   </div>
                   <span className="text-xs font-semibold text-[#C2D9CD]">
                     Auto-ranked for{" "}
@@ -1309,7 +1330,7 @@ export default function FarmPlannerPage({
                   <div className="space-y-1">
                     <div className="inline-flex items-center gap-2 text-sm font-extrabold uppercase tracking-wider text-[#6EE7B7]">
                       <Sparkles className="w-4 h-4" />
-                      Interactive 3-Year Predict Mechanic
+                      {t.predictMechanicTitle}
                     </div>
                     <h2 className="text-2xl sm:text-3xl font-extrabold text-[#F7FAF6]">
                       Test &ldquo;{topPlan.name}&rdquo; in Different Weather Years
@@ -1321,13 +1342,15 @@ export default function FarmPlannerPage({
                       type="button"
                       onClick={() =>
                         speakHelper(
-                          `In a ${
+                          vp.scenarioSpeech(
                             scenario === "dry"
-                              ? "dry drought year"
+                              ? t.dryYear
                               : scenario === "wet"
-                                ? "wet rain year"
-                                : "normal weather year"
-                          }, harvest reliability is ${prediction.harvestReliability} percent. ${prediction.scenarioNote} By year 3, your soil health score is predicted to reach ${prediction.soilYear3} percent.`
+                                ? t.wetYear
+                                : t.normalYear,
+                            prediction.harvestReliability,
+                            prediction.soilYear3
+                          )
                         )
                       }
                       className="no-print inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-base font-bold text-[#08150F]"
@@ -1344,13 +1367,13 @@ export default function FarmPlannerPage({
                     [
                       {
                         id: "normal" as const,
-                        label: "Normal Weather Year",
+                        label: t.normalYear,
                         sub: "NASA 30-Year Average Rain & Heat",
                         icon: <CloudRain className="w-5 h-5 text-sky-300" />,
                       },
                       {
                         id: "dry" as const,
-                        label: "Dry / Drought Year",
+                        label: t.dryYear,
                         sub: backendClimate?.driestYear
                           ? `Like ${backendClimate.driestYear} (${backendClimate.driestYearRainMm} mm rain)`
                           : "Hardest Drought Stress Test",
@@ -1358,7 +1381,7 @@ export default function FarmPlannerPage({
                       },
                       {
                         id: "wet" as const,
-                        label: "Wet / Good Rain Year",
+                        label: t.wetYear,
                         sub: "+25% Rainfall Above Average",
                         icon: <Droplets className="w-5 h-5 text-[#6EE7B7]" />,
                       },
@@ -1371,7 +1394,15 @@ export default function FarmPlannerPage({
                         type="button"
                         onClick={() => {
                           setScenario(sc.id);
-                          if (autoSpeak) speakHelper(`Simulating ${sc.label}`);
+                          if (autoSpeak) {
+                            speakHelper(
+                              vp.scenarioSpeech(
+                                sc.label,
+                                prediction.harvestReliability,
+                                prediction.soilYear3
+                              )
+                            );
+                          }
                         }}
                         className={`p-4 rounded-2xl border-2 text-left transition ${
                           active
@@ -1399,7 +1430,7 @@ export default function FarmPlannerPage({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
                   <div className="rounded-2xl bg-[#0C1B15] border border-[#6EE7B7]/25 p-4 space-y-1">
                     <div className="text-sm font-bold text-[#C2D9CD]">
-                      Predicted Safe Harvest
+                      {t.safeHarvest}
                     </div>
                     <div className="text-3xl font-extrabold text-[#6EE7B7]">
                       {prediction.harvestReliability}%
@@ -1413,7 +1444,7 @@ export default function FarmPlannerPage({
 
                   <div className="rounded-2xl bg-[#0C1B15] border border-[#6EE7B7]/25 p-4 space-y-1">
                     <div className="text-sm font-bold text-[#C2D9CD]">
-                      Predicted Water Need
+                      {t.waterNeed}
                     </div>
                     <div className="text-3xl font-extrabold text-sky-300">
                       {prediction.scenarioWaterNeed.toLocaleString()}
@@ -1434,7 +1465,7 @@ export default function FarmPlannerPage({
 
                   <div className="rounded-2xl bg-[#0C1B15] border border-[#6EE7B7]/25 p-4 space-y-1">
                     <div className="text-sm font-bold text-[#C2D9CD]">
-                      Predicted 3-Year Income
+                      {t.threeYrIncome}
                     </div>
                     <div className="text-3xl font-extrabold text-[#F7FAF6]">
                       ${prediction.threeYearIncomeUsd.toLocaleString()}
@@ -1447,7 +1478,7 @@ export default function FarmPlannerPage({
                   {/* 3-Year Soil Health Trajectory */}
                   <div className="rounded-2xl bg-[#0C1B15] border border-[#6EE7B7]/25 p-4 space-y-2">
                     <div className="text-sm font-bold text-[#C2D9CD]">
-                      3-Year Soil Health Forecast
+                      {t.soilForecast}
                     </div>
                     <div className="grid grid-cols-3 gap-2 items-end pt-1">
                       {(
@@ -1505,7 +1536,10 @@ export default function FarmPlannerPage({
                         type="button"
                         onClick={() =>
                           speakHelper(
-                            `Your field climate is ${backendClimate.zoneLabel}. Average yearly rain is ${backendClimate.annualRainMm} millimeters with ${backendClimate.dryMonths.length} dry months. Drought risk is ${backendClimate.risks.drought}. Summer heat risk is ${backendClimate.risks.heat}.`
+                            vp.climateSpeech(
+                              backendClimate.annualRainMm,
+                              backendClimate.dryMonths.length
+                            )
                           )
                         }
                         className="no-print inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-sm font-bold text-[#08150F]"
@@ -1630,6 +1664,7 @@ export default function FarmPlannerPage({
                 isPrimary
                 ttsSupported={ttsSupported}
                 onSpeak={speakHelper}
+                lang={lang}
               />
             )}
 
@@ -1663,6 +1698,7 @@ export default function FarmPlannerPage({
                       isPrimary={false}
                       ttsSupported={ttsSupported}
                       onSpeak={speakHelper}
+                      lang={lang}
                       onSelect={() => setSelectedPlanId(plan.id)}
                     />
                   ))}
@@ -1678,7 +1714,7 @@ export default function FarmPlannerPage({
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-base font-bold text-[#F7FAF6] transition"
                 >
                   <ArrowLeft className="w-5 h-5" />
-                  Change Answers
+                  {t.changeAnswers}
                 </button>
                 <button
                   type="button"
@@ -1686,7 +1722,7 @@ export default function FarmPlannerPage({
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-base font-bold text-[#F7FAF6] transition"
                 >
                   <PenTool className="w-5 h-5" />
-                  Mark Another Field
+                  {t.markAnotherField}
                 </button>
                 <button
                   type="button"
@@ -1694,7 +1730,7 @@ export default function FarmPlannerPage({
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-base font-bold text-[#F7FAF6] transition"
                 >
                   <Printer className="w-5 h-5 text-[#6EE7B7]" />
-                  Print Plan Sheet
+                  {t.printPlan}
                 </button>
                 <button
                   type="button"
@@ -1702,7 +1738,7 @@ export default function FarmPlannerPage({
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-full border border-[#6EE7B7]/30 bg-[#152E24] hover:bg-[#1C3D30] text-base font-bold text-[#F7FAF6] transition"
                 >
                   <Download className="w-5 h-5 text-sky-300" />
-                  Download GeoJSON
+                  {t.downloadGeoJson}
                 </button>
               </div>
 
@@ -1729,6 +1765,7 @@ function LargePlanCard({
   ttsSupported,
   onSpeak,
   onSelect,
+  lang,
 }: {
   plan: CropCyclePlan;
   inputs: FarmerGroundInputs;
@@ -1736,15 +1773,21 @@ function LargePlanCard({
   ttsSupported: boolean;
   onSpeak: (text: string) => void;
   onSelect?: () => void;
+  lang: AppLanguage;
 }) {
+  const t = getTranslations(lang);
+  const vp = getVoicePrompts(lang);
   const waterPill = getWaterPill(plan.waterStatus);
 
   const buildPlanSpeech = () =>
-    `${plan.name}. ${plan.tagline}. ` +
-    `Step 1 in ${plan.stages[0].durationMonths}: plant ${plan.stages[0].crop}. ` +
-    `Step 2 in ${plan.stages[1].durationMonths}: plant ${plan.stages[1].crop}. ` +
-    `Step 3 in ${plan.stages[2].durationMonths}: plant ${plan.stages[2].crop}. ` +
-    `Soil health score is ${plan.soilHealthScore} percent. Weather resilience is ${plan.resilienceScore ?? plan.waterEfficiencyScore} percent.`;
+    vp.readPlanCard(
+      plan.name,
+      translateCropName(plan.stages[0].crop, lang),
+      translateCropName(plan.stages[1].crop, lang),
+      translateCropName(plan.stages[2].crop, lang),
+      plan.soilHealthScore,
+      plan.resilienceScore ?? plan.waterEfficiencyScore
+    );
 
   return (
     <article
@@ -1796,7 +1839,7 @@ function LargePlanCard({
               className="no-print inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-400 hover:bg-amber-300 border border-amber-200 text-base font-bold text-[#08150F]"
             >
               <Volume2 className="w-5 h-5" />
-              Listen to Plan
+              {t.listenToPage}
             </button>
           )}
         </div>
@@ -1902,9 +1945,9 @@ function LargePlanCard({
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                <CropPictogram name={stage.crop} />
+                <CropPictogram name={translateCropName(stage.crop, lang)} />
                 <div className="text-xl font-extrabold text-[#F7FAF6]">
-                  {stage.crop}
+                  {translateCropName(stage.crop, lang)}
                 </div>
               </div>
               <p className="text-base text-[#D4E6DC] leading-relaxed">
@@ -1919,7 +1962,7 @@ function LargePlanCard({
       {plan.threeYearCycle && plan.threeYearCycle.length === 3 && (
         <div data-testid="three-year-roadmap" className="space-y-3">
           <div className="text-base font-extrabold uppercase tracking-wider text-amber-300">
-            3-Year Crop Rotation Roadmap (Year 1 &rarr; Year 2 &rarr; Year 3)
+            {t.roadmapTitle}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             {plan.threeYearCycle.map((yr) => (
@@ -1936,7 +1979,7 @@ function LargePlanCard({
                   </span>
                 </div>
                 <div className="text-base font-extrabold text-[#F7FAF6]">
-                  {yr.crops.join(" → ")}
+                  {yr.crops.map((c) => translateCropName(c, lang)).join(" → ")}
                 </div>
                 <div className="text-xs font-bold text-sky-300">
                   ~${yr.estimatedRevenuePerHaUsd.toLocaleString()} / ha est.

@@ -21,10 +21,12 @@ import {
   Volume2,
 } from "lucide-react";
 import { speakText, stopSpeaking } from "@/lib/speech";
+import { getTutorialTranslations, type AppLanguage } from "@/lib/i18n";
 
 interface TutorialOverlayProps {
   isOpen: boolean;
   onToggle: (open: boolean) => void;
+  lang?: AppLanguage;
   isWelcomeOpen: boolean;
   hasUsedLocationTool: boolean;
   hasSwitchedView: boolean;
@@ -42,66 +44,7 @@ interface TutorialOverlayProps {
   onQuickDemoField: () => void;
 }
 
-interface TourStepConfig {
-  id: string;
-  target: string;
-  title: string;
-  description: string;
-  tip: string;
-}
-
 const STEP_COOLDOWN_MS = 550;
-
-const TOUR_STEPS: TourStepConfig[] = [
-  {
-    id: "welcome",
-    target: "welcome-cta",
-    title: "1. Welcome — Enter the 3D Earth",
-    description:
-      "Welcome to NASA × FARMVISION! Behind this title is a live interactive 3D Earth powered by NASA satellites. Click View 3D Earth or press Next → to begin.",
-    tip: "Clicking Next → transitions straight into the 3D Earth and opens Step 2.",
-  },
-  {
-    id: "location",
-    target: "location-search",
-    title: "2. Find Your Farm — What Every Icon Does",
-    description:
-      "Each icon in the top search bar helps you find your land in a different way. Here is what every icon does:",
-    tip: "Try any tool above (or tap one below) whenever you like — or press Next → to keep going:",
-  },
-  {
-    id: "views",
-    target: "view-switcher",
-    title: "3. Switch Between 3D Earth & 2D Satellite Map",
-    description:
-      "Explore the planet in 3D Earth view, or click 2D Map (or zoom in close) for flat overhead satellite photos of your fields.",
-    tip: "In 2D Map view you can also inspect satellite field imagery before marking your plot:",
-  },
-  {
-    id: "mark-field",
-    target: "mark-field-btn",
-    title: "4. Mark Your Field Boundary",
-    description:
-      "Click Mark My Field in the top-right to turn on corner drawing on the map. Tap 3 or 4 corners around your plot and press Finish Land.",
-    tip: "Preview drawing mode below, launch a sample farm, or click Next → anytime:",
-  },
-  {
-    id: "plan-steps",
-    target: "step-progress",
-    title: "5. Answer 3 Simple Questions → Get Your Crop Plan",
-    description:
-      "Once your field is marked, clouds sweep across to your planner where you pick Water Supply, Last Crop, and Goal to get a simple 1-Year Plan & 3-Year Forecast.",
-    tip: "Use these 3 top-bar tabs anytime to jump back and adjust your answers.",
-  },
-  {
-    id: "practice",
-    target: "quick-practice",
-    title: '6. Interactive "Quick Practice" Checklist',
-    description:
-      "Put your new skills into action! This live drawer tracks your 4 steps—entering the 3D Earth, finding your location, marking your land, and generating your crop plan.",
-    tip: "You can replay this spotlight tour anytime by clicking Tour in the top bar or Start Guided Tour inside the checklist!",
-  },
-];
 
 const QUICK_REGIONS = [
   { label: "Nile Delta", query: "Nile Delta, Egypt" },
@@ -119,6 +62,7 @@ interface SpotlightBox {
 export default function TutorialOverlay({
   isOpen,
   onToggle,
+  lang = "en",
   isWelcomeOpen,
   hasUsedLocationTool,
   hasSwitchedView,
@@ -181,7 +125,8 @@ export default function TutorialOverlay({
     }
   }, [isOpen, stepIndex]);
 
-  const currentStep = TOUR_STEPS[stepIndex] ?? TOUR_STEPS[0];
+  const tt = getTutorialTranslations(lang);
+  const currentStep = tt.steps[stepIndex] ?? tt.steps[0];
   const minStepIndex = 0;
 
   const measureAndPosition = useCallback(() => {
@@ -313,7 +258,7 @@ export default function TutorialOverlay({
       setStepIndex(1);
       return;
     }
-    if (stepIndex < TOUR_STEPS.length - 1) {
+    if (stepIndex < tt.steps.length - 1) {
       setStepIndex((i) => i + 1);
     } else {
       onToggle(false);
@@ -324,6 +269,7 @@ export default function TutorialOverlay({
     onEnterFromWelcome,
     onToggle,
     stepIndex,
+    tt.steps.length,
   ]);
 
   const handleBack = useCallback(() => {
@@ -335,19 +281,8 @@ export default function TutorialOverlay({
   }, [isStepCooldown, minStepIndex, stepIndex]);
 
   const handleSpeakCurrentStep = useCallback(() => {
-    if (currentStep.id === "location") {
-      speakText(
-        `${currentStep.title}. ${currentStep.description} ` +
-          `1. Search Bar and Go: type your village or town name and press Go. ` +
-          `2. Voice Mic: tap to speak your village name out loud instead of typing. ` +
-          `3. GPS Target: jumps straight to your device location. ` +
-          `4. Lat Lng Compass: type exact latitude and longitude numbers. ` +
-          `5. Quick Regions: tap a sample farming area to fly there now.`
-      );
-      return;
-    }
-    speakText(`${currentStep.title}. ${currentStep.description} ${currentStep.tip}`);
-  }, [currentStep]);
+    speakText(currentStep.voiceText, { lang });
+  }, [currentStep.voiceText, lang]);
 
   // Keyboard support: ArrowLeft / ArrowRight / Escape (ignore held key repeats)
   useEffect(() => {
@@ -373,7 +308,7 @@ export default function TutorialOverlay({
 
   const handleQuickRegion = (label: string, query: string) => {
     onSearchLocation(query);
-    setTipNotice(`Flying map to ${label}!`);
+    setTipNotice(`${tt.flyingToPrefix} ${label}!`);
   };
 
   const handleCoordsSubmit = (e: React.FormEvent) => {
@@ -388,33 +323,33 @@ export default function TutorialOverlay({
       lng < -180 ||
       lng > 180
     ) {
-      setCoordError("Lat -90..90, Lng -180..180");
+      setCoordError(tt.coordError);
       return;
     }
     setCoordError(null);
     onFlyToCoords(lat, lng);
-    setTipNotice(`Moved to (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)!`);
+    setTipNotice(`${tt.coordMovedPrefix} (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)!`);
   };
 
   const practiceItems = [
     {
       id: "enter-earth",
-      label: "Enter the 3D Earth view",
+      label: tt.item1EnterEarth,
       done: !isWelcomeOpen,
     },
     {
       id: "find-location",
-      label: "Find a location (Search, Voice, GPS, or Coords)",
+      label: tt.item2FindLocation,
       done: hasUsedLocationTool,
     },
     {
       id: "mark-field",
-      label: "Mark your field corners (or load Demo Field)",
+      label: tt.item3MarkField,
       done: hasMarkedField,
     },
     {
       id: "generate-plan",
-      label: "Generate your 1-Year Crop Plan",
+      label: tt.item4GeneratePlan,
       done: hasGeneratedPlan,
     },
   ];
@@ -427,19 +362,19 @@ export default function TutorialOverlay({
       {showQuickPracticeDrawer && (
         <aside
           data-tour="quick-practice"
-          aria-label="Quick Practice Checklist"
+          aria-label={tt.quickPracticeHeader(completedCount, 4)}
           className="fixed bottom-4 right-4 z-[460] w-72 sm:w-80 rounded-2xl bg-[#10241C]/95 backdrop-blur-xl border border-[#6EE7B7]/25 shadow-2xl overflow-hidden text-[#F7FAF6]"
         >
           <button
             type="button"
             onClick={() => setIsChecklistCollapsed((c) => !c)}
             aria-expanded={!isChecklistCollapsed}
-            className="w-full px-3.5 py-2.5 bg-gradient-to-r from-[#1A3D2E] via-[#153125] to-[#10241C] border-b border-[#6EE7B7]/20 flex items-center justify-between gap-2 text-left"
+            className="w-full px-3.5 py-2.5 bg-gradient-to-r from-[#1A3D2E] via-[#153125] to-[#10241C] border-b border-[#6EE7B7]/20 flex items-center justify-between gap-2 text-start"
           >
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-[#6EE7B7] shrink-0" />
               <span className="text-xs font-bold text-[#F7FAF6]">
-                Quick Practice: {completedCount}/4 completed
+                {tt.quickPracticeHeader(completedCount, 4)}
               </span>
             </div>
             {isChecklistCollapsed ? (
@@ -474,7 +409,7 @@ export default function TutorialOverlay({
               {completedCount === 4 && (
                 <div className="rounded-xl bg-[#6EE7B7]/15 border border-[#6EE7B7]/40 px-2.5 py-1.5 text-[11px] font-semibold text-[#6EE7B7] flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                  All 4 steps completed! Ready to farm smarter.
+                  {tt.allCompleted}
                 </div>
               )}
 
@@ -488,7 +423,7 @@ export default function TutorialOverlay({
                   className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#152E24] hover:bg-[#1C3D30] border border-[#6EE7B7]/35 text-[11px] font-bold text-[#6EE7B7] transition"
                 >
                   <Play className="w-3 h-3" />
-                  Start Guided Tour
+                  {tt.startGuidedTour}
                 </button>
               </div>
             </div>
@@ -535,7 +470,7 @@ export default function TutorialOverlay({
           {/* Top Row: Progress Dots, Harvest Gold Listen & Skip Tour */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5" aria-label="Tour progress">
-              {TOUR_STEPS.map((st, idx) => (
+              {tt.steps.map((st, idx) => (
                 <button
                   key={st.id}
                   type="button"
@@ -545,8 +480,8 @@ export default function TutorialOverlay({
                     setTipNotice(null);
                     setStepIndex(idx);
                   }}
-                  title={`Go to step ${idx + 1}`}
-                  aria-label={`Go to step ${idx + 1}`}
+                  title={`${tt.stepOf(idx + 1, tt.steps.length)}`}
+                  aria-label={`${tt.stepOf(idx + 1, tt.steps.length)}`}
                   className={`h-1.5 rounded-full transition-all disabled:cursor-not-allowed ${
                     idx === stepIndex
                       ? "w-5 bg-[#6EE7B7]"
@@ -561,18 +496,18 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={handleSpeakCurrentStep}
-                title="Listen to this step read aloud"
+                title={tt.listenTitle}
                 className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-200 bg-amber-400 hover:bg-amber-300 text-[10px] font-bold text-[#091812] shadow-sm transition"
               >
                 <Volume2 className="w-3 h-3" />
-                Listen
+                {tt.listen}
               </button>
               <button
                 type="button"
                 onClick={() => onToggle(false)}
                 className="text-[11px] font-semibold text-[#C2D9CD] hover:text-[#F7FAF6] transition"
               >
-                Skip Tour
+                {tt.skipTour}
               </button>
             </div>
           </div>
@@ -581,7 +516,7 @@ export default function TutorialOverlay({
           <div className="flex items-center gap-2">
             <MiniFarmerIcon />
             <span className="px-2.5 py-0.5 rounded-md bg-[#6EE7B7]/15 border border-[#6EE7B7]/40 text-[10px] font-bold uppercase tracking-[0.14em] text-[#6EE7B7]">
-              STEP {stepIndex + 1} OF {TOUR_STEPS.length}
+              {tt.stepOf(stepIndex + 1, tt.steps.length)}
             </span>
           </div>
 
@@ -599,7 +534,7 @@ export default function TutorialOverlay({
           {currentStep.id === "location" && (
             <div className="rounded-xl bg-[#0C1B15] border border-[#6EE7B7]/20 p-2.5 space-y-1.5">
               <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#6EE7B7]">
-                What Every Icon Does
+                {tt.whatEveryIconDoes}
               </div>
 
               <div className="flex items-start gap-2 rounded-lg bg-[#152E24] px-2 py-1.5">
@@ -608,10 +543,10 @@ export default function TutorialOverlay({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-bold text-[#F7FAF6]">
-                    Search Box &amp; Go
+                    {tt.searchTitle}
                   </div>
                   <p className="text-[10px] text-[#C2D9CD] leading-snug">
-                    Type your village, town, or farm area above, then tap <strong>Go</strong>.
+                    {tt.searchDesc}
                   </p>
                 </div>
               </div>
@@ -622,21 +557,21 @@ export default function TutorialOverlay({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-bold text-sky-200">
-                    Voice Mic (Speak)
+                    {tt.micTitle}
                   </div>
                   <p className="text-[10px] text-[#C2D9CD] leading-snug">
-                    Tap to say your village or region out loud — no typing needed.
+                    {tt.micDesc}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     onStartVoiceSearch();
-                    setTipNotice("Voice Mic ready — speak your town or use a sample region!");
+                    setTipNotice(tt.micNotice);
                   }}
                   className="px-2 py-1 rounded-full bg-[#0C1B15] border border-sky-400/40 hover:bg-sky-400/20 text-[10px] font-bold text-sky-200 shrink-0 transition"
                 >
-                  Try
+                  {tt.tryBtn}
                 </button>
               </div>
 
@@ -646,21 +581,21 @@ export default function TutorialOverlay({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-bold text-[#6EE7B7]">
-                    GPS Target Icon
+                    {tt.gpsTitle}
                   </div>
                   <p className="text-[10px] text-[#C2D9CD] leading-snug">
-                    Jumps straight to where you are standing using device GPS.
+                    {tt.gpsDesc}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     onLocateMe();
-                    setTipNotice("Requesting device GPS location!");
+                    setTipNotice(tt.gpsNotice);
                   }}
                   className="px-2 py-1 rounded-full bg-[#0C1B15] border border-[#6EE7B7]/40 hover:bg-[#6EE7B7]/20 text-[10px] font-bold text-[#6EE7B7] shrink-0 transition"
                 >
-                  Try GPS
+                  {tt.tryGpsBtn}
                 </button>
               </div>
 
@@ -670,10 +605,10 @@ export default function TutorialOverlay({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-bold text-amber-200">
-                    Compass (Lat / Lng)
+                    {tt.compassTitle}
                   </div>
                   <p className="text-[10px] text-[#C2D9CD] leading-snug">
-                    Enter exact latitude &amp; longitude numbers for your plot.
+                    {tt.compassDesc}
                   </p>
                 </div>
                 <button
@@ -681,7 +616,7 @@ export default function TutorialOverlay({
                   onClick={() => setShowCoordsBox((v) => !v)}
                   className="px-2 py-1 rounded-full bg-[#0C1B15] border border-amber-300/40 hover:bg-amber-300/20 text-[10px] font-bold text-amber-200 shrink-0 transition"
                 >
-                  {showCoordsBox ? "Hide" : "Lat/Lng"}
+                  {showCoordsBox ? tt.hideBtn : tt.latLngBtn}
                 </button>
               </div>
 
@@ -711,7 +646,7 @@ export default function TutorialOverlay({
                       type="submit"
                       className="px-2.5 py-1 rounded-lg bg-[#F7FAF6] hover:bg-[#6EE7B7] text-[#08150F] text-[10px] font-bold shrink-0"
                     >
-                      Go
+                      {tt.goBtn}
                     </button>
                   </div>
                   {coordError && (
@@ -727,10 +662,10 @@ export default function TutorialOverlay({
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-bold text-[#F7FAF6]">
-                      Quick Region Shortcuts
+                      {tt.quickRegionsTitle}
                     </div>
                     <p className="text-[10px] text-[#C2D9CD] leading-snug">
-                      Tap a sample region to jump there immediately:
+                      {tt.quickRegionsDesc}
                     </p>
                   </div>
                 </div>
@@ -773,13 +708,13 @@ export default function TutorialOverlay({
                   onClick={() => {
                     onToggleViewMode();
                     setTipNotice(
-                      `Switched to ${viewMode === "globe" ? "2D Satellite Map" : "3D Earth"}!`
+                      viewMode === "globe" ? tt.switchedTo2d : tt.switchedTo3d
                     );
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#4ADE80] hover:bg-amber-300 text-[#07150F] text-[10px] font-bold transition"
                 >
                   <Globe2 className="w-3 h-3" />
-                  Switch to {viewMode === "globe" ? "2D Map" : "3D Earth"}
+                  {viewMode === "globe" ? tt.switchTo2d : tt.switchTo3d}
                 </button>
                 {tipNotice && (
                   <span className="text-[10px] font-semibold text-[#6EE7B7]">
@@ -796,12 +731,12 @@ export default function TutorialOverlay({
                   type="button"
                   onClick={() => {
                     onStartDrawing();
-                    setTipNotice("Draw tool active — tap corners on the map anytime!");
+                    setTipNotice(tt.drawNotice);
                   }}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#4ADE80] hover:bg-amber-300 text-[#07150F] text-[10px] font-bold transition"
                 >
                   <PenTool className="w-3 h-3" />
-                  {isDrawing ? "Drawing Active ✓" : "Start Draw Tool"}
+                  {isDrawing ? tt.drawingActive : tt.startDrawTool}
                 </button>
                 <button
                   type="button"
@@ -812,7 +747,7 @@ export default function TutorialOverlay({
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#0C1B15] border border-[#6EE7B7]/30 hover:border-[#6EE7B7] text-[10px] font-semibold text-[#F7FAF6] transition"
                 >
                   <Sparkles className="w-3 h-3 text-[#6EE7B7]" />
-                  Try Demo Field
+                  {tt.tryDemoField}
                 </button>
               </div>
             )}
@@ -833,21 +768,21 @@ export default function TutorialOverlay({
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#C2D9CD] hover:text-[#F7FAF6] disabled:opacity-30 transition"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Back
+              {tt.back}
             </button>
 
             <span className="text-[10px] text-[#8FA89B] font-medium select-none">
-              1 step at a time
+              {tt.oneStepAtATime}
             </span>
 
-            {stepIndex < TOUR_STEPS.length - 1 ? (
+            {stepIndex < tt.steps.length - 1 ? (
               <button
                 type="button"
                 disabled={isStepCooldown}
                 onClick={handleNext}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-[#F7FAF6] hover:bg-[#6EE7B7] text-[#08150F] text-xs font-bold shadow-md transition disabled:opacity-50"
               >
-                Next
+                {tt.next}
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             ) : (
@@ -857,7 +792,7 @@ export default function TutorialOverlay({
                 onClick={handleNext}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-[#6EE7B7] hover:bg-amber-300 text-[#08150F] text-xs font-bold shadow-md transition disabled:opacity-50"
               >
-                Finish Tour
+                {tt.finishTour}
                 <PartyPopper className="w-3.5 h-3.5" />
               </button>
             )}
